@@ -1,0 +1,294 @@
+{
+  "name": "CW-03: Output Generation Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "output-request",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Output Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "notes": "Receives POST from chat agent or direct trigger. Payload: {deal_id, output_type, recipient_email, recipient_name, instructions, requested_by}"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "query": "SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage, d.deal_value_usd, d.close_date, d.forecast_category, dh.pain_score, dh.power_score, dh.vision_score, dh.value_score, dh.change_score, dh.control_score, dh.p2v2c2_total, dh.champion_name, dh.executive_sponsor_name, dh.current_state_org, dh.current_state_activities, dh.current_state_technology, dh.future_state_org, dh.future_state_activities, dh.future_state_technology, dh.risks, dh.next_step, dh.next_step_date, dh.call_summary, dh.highlights, dh.action_items_prospect, dh.action_items_internal, dh.services_narrative, dh.general_narrative, dh.key_stakeholder_success_criteria, dh.dap_summary, dh.internal_team_update, dh.scored_at FROM deals d LEFT JOIN v_deal_health_latest dh ON dh.deal_id = d.deal_id WHERE d.deal_id = $1",
+        "additionalFields": {
+          "queryParams": "={{ [$json.body.deal_id] }}"
+        }
+      },
+      "id": "get-deal-context",
+      "name": "Postgres: Get Deal Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Fetches latest deal health scores and all 22 artifacts from Postgres."
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "query": "SELECT output_type, recipient_email, subject, content_summary, sent_at FROM outputs_log WHERE deal_id = $1 AND recipient_email = $2 ORDER BY sent_at DESC LIMIT 10",
+        "additionalFields": {
+          "queryParams": "={{ [$('Webhook: Output Request').first().json.body.deal_id, $('Webhook: Output Request').first().json.body.recipient_email] }}"
+        }
+      },
+      "id": "get-output-history",
+      "name": "Postgres: Get Output History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 480],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Retrieves last 10 outputs sent to this recipient for this deal. Prevents repetition."
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-text",
+        "qdrantCollection": {
+          "value": "deals",
+          "mode": "id"
+        },
+        "prompt": "={{ $('Webhook: Output Request').first().json.body.instructions + ' ' + $('Postgres: Get Deal Context').first().json.company_name }}",
+        "topK": 8,
+        "options": {
+          "host": "http://qdrant:6333",
+          "filter": "={{ JSON.stringify({ must: [{ key: 'deal_id', match: { value: $('Webhook: Output Request').first().json.body.deal_id } }] }) }}"
+        }
+      },
+      "id": "qdrant-retrieve",
+      "name": "Qdrant: Retrieve Deal Context",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
+      "position": [460, 660],
+      "credentials": {
+        "qdrantApi": { "id": "qdrant-cred", "name": "Qdrant Local" }
+      },
+      "notes": "Retrieves top-8 most relevant deal content chunks based on the output request instructions."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all context sources for the generation prompt\nconst request = $('Webhook: Output Request').first().json.body;\nconst deal = $('Postgres: Get Deal Context').first().json;\nconst outputHistory = $('Postgres: Get Output History').all().map(i => i.json);\nconst ragContext = $('Qdrant: Retrieve Deal Context').first().json.text || '';\n\n// Format output history for prompt\nconst historyText = outputHistory.length > 0\n  ? outputHistory.map(h => `- ${h.sent_at?.split('T')[0]}: ${h.output_type} to ${h.recipient_email} — \"${h.content_summary}\"`).join('\\n')\n  : 'No previous outputs to this recipient for this deal.';\n\n// Format deal health summary\nconst p2v2c2Summary = [\n  `Pain: ${deal.pain_score}/5`,\n  `Power: ${deal.power_score}/5`,\n  `Vision: ${deal.vision_score}/5`,\n  `Value: ${deal.value_score}/5`,\n  `Change: ${deal.change_score}/5`,\n  `Control: ${deal.control_score}/5`,\n  `Total: ${deal.p2v2c2_total}/30`\n].join(' | ');\n\nreturn [{\n  json: {\n    request,\n    deal,\n    history_text: historyText,\n    rag_context: ragContext,\n    p2v2c2_summary: p2v2c2Summary,\n    output_type: request.output_type,\n    deal_id: request.deal_id,\n    recipient_email: request.recipient_email,\n    recipient_name: request.recipient_name,\n    instructions: request.instructions,\n    requested_by: request.requested_by || 'chat_agent'\n  }\n}];\n"
+      },
+      "id": "merge-context",
+      "name": "Code: Merge All Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 460],
+      "notes": "Merges deal health, output history, and RAG context into one payload for generation."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "conditions": [{ "leftValue": "={{ $json.output_type }}", "rightValue": "approach_pdf", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "pdf" },
+            { "conditions": { "conditions": [{ "leftValue": "={{ $json.output_type }}", "rightValue": "exec_ppt", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "ppt" },
+            { "conditions": { "conditions": [{ "leftValue": "={{ $json.output_type }}", "rightValue": "pre_call_planner", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "planner" },
+            { "conditions": { "conditions": [{ "leftValue": "={{ $json.output_type }}", "rightValue": "internal_team_update", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "internal" }
+          ],
+          "fallbackOutput": "email"
+        }
+      },
+      "id": "output-type-router",
+      "name": "Route by Output Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [940, 460],
+      "notes": "Routes to appropriate generation template: email (default), PDF, PPT, planner, internal."
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ \nconst ctx = $json;\nconst deal = ctx.deal;\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are an expert sales communication specialist for Clearwater Security & Compliance. Your job is to write a SEND-READY email on behalf of Austin Hollins (AE at Clearwater) for the ${deal.company_name} deal.\n\nClearwater sells cybersecurity, risk management, and compliance services to healthcare organizations.\n\n## OUTPUT TYPE\n${ctx.output_type}\n\n## AUSTIN'S SPECIFIC INSTRUCTIONS\n${ctx.instructions}\n\n## DEAL CONTEXT\nAccount: ${deal.company_name}\nStage: ${deal.salesforce_stage || deal.deal_stage || 'Unknown'}\nP2V2C2: ${ctx.p2v2c2_summary}\nChampion: ${deal.champion_name || 'Not identified'}\nExecutive Sponsor: ${deal.executive_sponsor_name || 'Not identified'}\nNext Step: ${deal.next_step || 'TBD'} (${deal.next_step_date || 'date TBD'})\nRecipient: ${ctx.recipient_name || ctx.recipient_email}\nToday: ${today}\n\n## RELEVANT DEAL CONTENT (from recent emails/transcripts)\n${ctx.rag_context}\n\n## PREVIOUS OUTPUTS TO THIS RECIPIENT FOR THIS DEAL\n${ctx.history_text}\n\n## WRITING GUIDELINES\n- Tone: Professional, warm, consultative — never pushy or sales-y\n- Reference specific details from the deal content above\n- Build on previous communications (never repeat the same talking points)\n- Focus on THEIR pain and goals, not Clearwater's capabilities\n- Keep emails concise: 150-250 words for external emails, 300-400 for internal\n- Always end with a clear next step or call to action\n- Use the Clearwater CPS approach: demonstrate value, build trust, reference their specific pain\n\n## OUTPUT FORMAT\nReturn ONLY valid JSON (no markdown, no preamble):\n{\n  \"subject\": \"[Email subject line]\",\n  \"body\": \"[Full email body — plain text, no HTML]\",\n  \"content_summary\": \"[2-3 sentence summary of what was written, for the output history log]\",\n  \"output_type\": \"${ctx.output_type}\",\n  \"recommended_send_time\": \"[immediate | morning | end_of_day | specific date]\"\n}`;\n}}\n"
+            }
+          ]
+        },
+        "options": { "maxTokens": 2048 }
+      },
+      "id": "claude-email-gen",
+      "name": "Claude Sonnet: Generate Email",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1160, 600],
+      "credentials": {
+        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
+      },
+      "notes": "Claude Sonnet generates all email-type outputs. Uses output history to avoid repetition."
+    },
+    {
+      "parameters": {
+        "model": "claude-opus-4-6",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ \nconst ctx = $json;\nconst deal = ctx.deal;\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are a senior sales strategist for Clearwater Security & Compliance. Create a comprehensive PRE-CALL PLANNER for Austin Hollins (AE) preparing for an upcoming meeting with ${deal.company_name}.\n\n## DEAL CONTEXT\nAccount: ${deal.company_name}\nStage: ${deal.salesforce_stage || 'Unknown'}\nP2V2C2 Total: ${ctx.p2v2c2_summary}\nChampion: ${deal.champion_name || 'TBD'}\nExecutive Sponsor: ${deal.executive_sponsor_name || 'TBD'}\nNext Step: ${deal.next_step}\nToday: ${today}\n\n## SPECIFIC MEETING NOTES FROM AUSTIN\n${ctx.instructions}\n\n## RELEVANT DEAL CONTENT\n${ctx.rag_context}\n\n## CURRENT STATE (from deal record)\nOrg: ${deal.current_state_org || 'Unknown'}\nActivities: ${deal.current_state_activities || 'Unknown'}\nTechnology: ${deal.current_state_technology || 'Unknown'}\n\n## FUTURE STATE\nOrg: ${deal.future_state_org || 'Unknown'}\nActivities: ${deal.future_state_activities || 'Unknown'}\nTechnology: ${deal.future_state_technology || 'Unknown'}\n\n## IDENTIFIED RISKS\n${(deal.risks || []).join('\\n') || 'None identified'}\n\n## PREVIOUS OUTPUTS\n${ctx.history_text}\n\nReturn ONLY valid JSON:\n{\n  \"subject\": \"Pre-Call Planner: ${deal.company_name} — [Meeting Type]\",\n  \"body\": \"[Full pre-call planner — use these sections:\\n\\n## MEETING OBJECTIVE\\n## ATTENDEES & ROLES\\n## DEAL STATUS SUMMARY (P2V2C2)\\n## KEY PAIN POINTS TO REFERENCE\\n## CPS TALKING POINTS (aligned to current stage)\\n## OPEN QUESTIONS TO ASK\\n## ANTICIPATED OBJECTIONS & RESPONSES\\n## DESIRED OUTCOMES FROM THIS MEETING\\n## NEXT STEPS TO PROPOSE]\",\n  \"content_summary\": \"Pre-call planner for [meeting type] with ${deal.company_name}. Key focus: [2-3 main themes]\",\n  \"output_type\": \"pre_call_planner\",\n  \"recommended_send_time\": \"immediate\"\n}`;\n}}\n"
+            }
+          ]
+        },
+        "options": { "maxTokens": 3000 }
+      },
+      "id": "claude-planner-gen",
+      "name": "Claude Opus: Generate Pre-Call Planner",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1160, 380],
+      "credentials": {
+        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
+      },
+      "notes": "Claude Opus for pre-call planners — comprehensive deal strategy document."
+    },
+    {
+      "parameters": {
+        "model": "claude-opus-4-6",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ \nconst ctx = $json;\nconst deal = ctx.deal;\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are a senior strategist at Clearwater Security & Compliance. Write an INTERNAL TEAM UPDATE for the ${deal.company_name} deal for Austin Hollins to send to the internal Clearwater team.\n\n## DEAL CONTEXT\nAccount: ${deal.company_name}\nStage: ${deal.salesforce_stage || 'Unknown'}\nDeal Value: ${deal.deal_value_usd ? '$' + Number(deal.deal_value_usd).toLocaleString() : 'TBD'}\nClose Date: ${deal.close_date || 'TBD'}\nForecast: ${deal.forecast_category || 'Pipeline'}\nP2V2C2: ${ctx.p2v2c2_summary}\nExecutive Sponsor: ${deal.executive_sponsor_name || 'TBD'}\nToday: ${today}\n\n## AUSTIN'S SPECIFIC NOTES\n${ctx.instructions}\n\n## RECENT DEAL CONTENT\n${ctx.rag_context}\n\n## DEAL HEALTH FROM LAST SCORING RUN\nCall Summary: ${deal.call_summary || 'Not available'}\nHighlights: ${(deal.highlights || []).join('; ') || 'None'}\nRisks: ${(deal.risks || []).join('; ') || 'None'}\nServices Discussed: ${deal.services_narrative || 'Not specified'}\n\nWrite a TWO-PARAGRAPH internal team update:\n- Paragraph 1: Deal status, what happened, where we stand. Analytical tone. Reference PE/Executive Sponsor air cover if applicable.\n- Paragraph 2: What the team needs to do, priorities, and any immediate actions required.\n- NO bullets. Inferential, strategic language. Written as a mandate.\n\nReturn ONLY valid JSON:\n{\n  \"subject\": \"Internal Deal Update: ${deal.company_name} — [Date]\",\n  \"body\": \"[Two-paragraph internal update]\",\n  \"content_summary\": \"Internal update on ${deal.company_name}: [key message in 1 sentence]\",\n  \"output_type\": \"internal_team_update\",\n  \"recommended_send_time\": \"immediate\"\n}`;\n}}\n"
+            }
+          ]
+        },
+        "options": { "maxTokens": 1500 }
+      },
+      "id": "claude-internal-gen",
+      "name": "Claude Opus: Generate Internal Update",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1160, 160],
+      "credentials": {
+        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
+      },
+      "notes": "Two-paragraph internal team update — strategic mandate tone, no bullets, PE air cover."
+    },
+    {
+      "parameters": {
+        "model": "claude-opus-4-6",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ \nconst ctx = $json;\nconst deal = ctx.deal;\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are an expert consultant at Clearwater Security & Compliance. Generate the CONTENT for a branded Approach Document for ${deal.company_name}. This will be rendered into a PDF using a Clearwater-branded template.\n\n## DEAL CONTEXT\nAccount: ${deal.company_name}\nStage: ${deal.salesforce_stage || 'Unknown'}\nChampion: ${deal.champion_name || 'TBD'}\nExecutive Sponsor: ${deal.executive_sponsor_name || 'TBD'}\nToday: ${today}\n\n## FROM DEAL RECORD\nCurrent State - Org: ${deal.current_state_org || 'To be refined'}\nCurrent State - Activities: ${deal.current_state_activities || 'To be refined'}\nCurrent State - Technology: ${deal.current_state_technology || 'To be refined'}\nFuture State - Org: ${deal.future_state_org || 'To be refined'}\nFuture State - Activities: ${deal.future_state_activities || 'To be refined'}\nFuture State - Technology: ${deal.future_state_technology || 'To be refined'}\nSuccess Criteria: ${deal.key_stakeholder_success_criteria || 'To be defined with client'}\nServices: ${deal.services_narrative || 'To be scoped'}\n\n## AUSTIN'S SPECIFIC INSTRUCTIONS\n${ctx.instructions}\n\n## RELEVANT DEAL CONTENT\n${ctx.rag_context}\n\nReturn ONLY valid JSON with the Approach Document structured content:\n{\n  \"client_name\": \"${deal.company_name}\",\n  \"date\": \"${today}\",\n  \"executive_summary\": \"[3-4 sentence exec summary of why Clearwater is the right partner]\",\n  \"current_state\": {\n    \"overview\": \"[1-2 paragraphs]\",\n    \"organization\": \"[bullet list]\",\n    \"activities\": \"[bullet list]\",\n    \"technology\": \"[bullet list]\",\n    \"pain_statement\": \"[1-2 sentences]\"\n  },\n  \"future_state\": {\n    \"vision\": \"[1-2 paragraphs]\",\n    \"organization\": \"[bullet list]\",\n    \"activities\": \"[bullet list]\",\n    \"technology\": \"[bullet list]\"\n  },\n  \"success_criteria\": [\"...\"],\n  \"proposed_approach\": \"[3-4 paragraphs describing Clearwater's tailored approach]\",\n  \"proposed_services\": [{ \"service\": \"...\", \"description\": \"...\", \"rationale\": \"...\" }],\n  \"next_steps\": [\"...\"],\n  \"content_summary\": \"Approach Document for ${deal.company_name}: [key value prop in 1 sentence]\"\n}`;\n}}\n"
+            }
+          ]
+        },
+        "options": { "maxTokens": 4096 }
+      },
+      "id": "claude-pdf-gen",
+      "name": "Claude Opus: Generate Approach Doc Content",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1160, 760],
+      "credentials": {
+        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
+      },
+      "notes": "Generates structured content for the Approach Document PDF. Content only — template handles branding."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's JSON response across all output types\n// Handles email, planner, internal, PDF content\nconst items_list = items;\nlet generated;\n\ntry {\n  const raw = items_list[0].json.content || items_list[0].json.text || '{}';\n  const cleaned = raw.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  generated = JSON.parse(cleaned);\n} catch (e) {\n  generated = {\n    subject: 'Output Generation Error',\n    body: `Error parsing AI response: ${e.message}`,\n    content_summary: 'Generation failed',\n    output_type: 'error',\n    recommended_send_time: 'hold'\n  };\n}\n\n// Get original request context\nconst ctx = $('Code: Merge All Context').first().json;\n\nreturn [{ json: {\n  ...generated,\n  deal_id: ctx.deal_id,\n  recipient_email: ctx.recipient_email,\n  recipient_name: ctx.recipient_name,\n  output_type: ctx.output_type,\n  requested_by: ctx.requested_by,\n  company_name: ctx.deal?.company_name || 'Unknown'\n} }];\n"
+      },
+      "id": "parse-generated",
+      "name": "Code: Parse Generated Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 460],
+      "notes": "Parses Claude JSON response with fallback. Merges request metadata for downstream logging."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.AUSTIN_EMAIL }}",
+        "subject": "={{ '[CW Output] ' + $json.subject }}",
+        "message": "={{ '## Output Type: ' + $json.output_type.toUpperCase() + '\\n' + '## Deal: ' + $json.company_name + '\\n' + (($json.recipient_email && $json.recipient_email !== $env.AUSTIN_EMAIL) ? '## Recipient: ' + ($json.recipient_name || '') + ' <' + $json.recipient_email + '>\\n' : '') + '\\n---\\n\\n' + $json.body + '\\n\\n---\\n[Sent by Clearwater Deal Intelligence Engine]' }}",
+        "options": {}
+      },
+      "id": "gmail-send",
+      "name": "Gmail: Send to Austin's Outlook",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1620, 460],
+      "operation": "send",
+      "credentials": {
+        "gmailOAuth2": { "id": "gmail-send-cred", "name": "Gmail Send" }
+      },
+      "notes": "Sends all AI-generated outputs to Austin's Outlook email for review before forwarding. Subject prefixed with [CW Output] for easy filtering."
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "outputs_log",
+        "columns": "deal_id, output_type, recipient_email, recipient_name, subject, content_summary, full_content, sent_at, triggered_by, status",
+        "additionalFields": {}
+      },
+      "id": "log-output",
+      "name": "Postgres: Log Output",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1840, 460],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Logs every generated output to outputs_log. This is the output memory store — queried before every future generation to avoid repetition."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, output_type: $('Code: Parse Generated Content').first().json.output_type, subject: $('Code: Parse Generated Content').first().json.subject, message: 'Output generated and sent to ' + $env.AUSTIN_EMAIL }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond: Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2060, 460],
+      "notes": "Returns success response to chat agent with output details."
+    }
+  ],
+  "connections": {
+    "Webhook: Output Request": {
+      "main": [[
+        { "node": "Postgres: Get Deal Context", "type": "main", "index": 0 },
+        { "node": "Postgres: Get Output History", "type": "main", "index": 0 },
+        { "node": "Qdrant: Retrieve Deal Context", "type": "main", "index": 0 }
+      ]]
+    },
+    "Postgres: Get Deal Context": { "main": [[{ "node": "Code: Merge All Context", "type": "main", "index": 0 }]] },
+    "Postgres: Get Output History": { "main": [[{ "node": "Code: Merge All Context", "type": "main", "index": 0 }]] },
+    "Qdrant: Retrieve Deal Context": { "main": [[{ "node": "Code: Merge All Context", "type": "main", "index": 0 }]] },
+    "Code: Merge All Context": { "main": [[{ "node": "Route by Output Type", "type": "main", "index": 0 }]] },
+    "Route by Output Type": {
+      "main": [
+        [{ "node": "Claude Opus: Generate Approach Doc Content", "type": "main", "index": 0 }],
+        [{ "node": "Claude Opus: Generate Approach Doc Content", "type": "main", "index": 0 }],
+        [{ "node": "Claude Opus: Generate Pre-Call Planner", "type": "main", "index": 0 }],
+        [{ "node": "Claude Opus: Generate Internal Update", "type": "main", "index": 0 }],
+        [{ "node": "Claude Sonnet: Generate Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Sonnet: Generate Email": { "main": [[{ "node": "Code: Parse Generated Content", "type": "main", "index": 0 }]] },
+    "Claude Opus: Generate Pre-Call Planner": { "main": [[{ "node": "Code: Parse Generated Content", "type": "main", "index": 0 }]] },
+    "Claude Opus: Generate Internal Update": { "main": [[{ "node": "Code: Parse Generated Content", "type": "main", "index": 0 }]] },
+    "Claude Opus: Generate Approach Doc Content": { "main": [[{ "node": "Code: Parse Generated Content", "type": "main", "index": 0 }]] },
+    "Code: Parse Generated Content": { "main": [[{ "node": "Gmail: Send to Austin's Outlook", "type": "main", "index": 0 }]] },
+    "Gmail: Send to Austin's Outlook": { "main": [[{ "node": "Postgres: Log Output", "type": "main", "index": 0 }]] },
+    "Postgres: Log Output": { "main": [[{ "node": "Respond: Success", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [{ "name": "clearwater" }, { "name": "output-gen" }, { "name": "phase-3" }]
+}

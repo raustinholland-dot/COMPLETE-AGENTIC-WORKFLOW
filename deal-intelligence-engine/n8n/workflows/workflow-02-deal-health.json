@@ -1,0 +1,270 @@
+{
+  "name": "CW-02: Deal Health Agent (P2V2C2)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "deal-health-trigger",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Health Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "notes": "Receives POST from Ingestion Pipeline with {deal_id, trigger_message_id, trigger_type}. Also callable on schedule."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 20 * * 1-5" }]
+        }
+      },
+      "id": "nightly-trigger",
+      "name": "Schedule: Nightly Rescore (8pm ET)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 480],
+      "notes": "Rescores all active deals every weeknight at 8pm ET regardless of new ingestion."
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "query": "SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage, d.deal_value_usd, d.close_date, d.forecast_category, d.salesforce_opp_id, dh.pain_score, dh.power_score, dh.vision_score, dh.value_score, dh.change_score, dh.control_score, dh.p2v2c2_total, dh.scored_at as last_scored FROM deals d LEFT JOIN v_deal_health_latest dh ON dh.deal_id = d.deal_id WHERE d.deal_id = $1 AND d.is_active = TRUE",
+        "additionalFields": {
+          "queryParams": "={{ [$json.body?.deal_id || $json.deal_id] }}"
+        }
+      },
+      "id": "get-deal-context",
+      "name": "Postgres: Get Deal Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Fetches current deal metadata and last known scores for trend comparison."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build all 6 P2V2C2 RAG queries + CAS + PE Sponsor + context queries\n// Each query is specifically tuned to Clearwater CPS methodology\nconst deal = items[0].json;\nconst company = deal.company_name || 'the prospect';\nconst dealId = deal.deal_id;\n\nconst queries = [\n  {\n    dimension: 'pain',\n    query: `What compelling reason to change, urgent business problem, or cybersecurity/compliance pain has ${company} expressed? What is driving this opportunity? Has the Executive Sponsor admitted the pain is large enough to change?`,\n    score_rubric: '0=no pain known, 1=PC shared situation, 2=PC admitted pain, 3=PC indicated PES pain, 4=PES admitted pain, 5=ES agreed pain large enough to change'\n  },\n  {\n    dimension: 'power',\n    query: `Who are the key power contacts at ${company}? Have we met with the Executive Sponsor or Potential Executive Sponsor? Has the ES agreed to the Dual Action Plan? Are we working with someone with budget authority and decision-making power?`,\n    score_rubric: '0=no idea who power is, 1=have indication of PES, 2=Champion agreed to take us to PES, 3=met with PES, 4=ES agreed to DAP, 5=DAP steps on schedule'\n  },\n  {\n    dimension: 'vision',\n    query: `What future state vision has been co-created with ${company}? Have we mapped our cybersecurity capabilities to their specific needs? Has the Executive Sponsor agreed to a vision of improved future state? Is the ES painting the vision to others?`,\n    score_rubric: '0=no idea of needs, 1=begun to define needs, 2=mapped capabilities to needs, 3=agreed to proof criteria, 4=ES agreed to vision of improved future state, 5=ES painting vision for others in org'\n  },\n  {\n    dimension: 'value',\n    query: `What financial justification, ROI, or cost of the problem has been established with ${company}? Have they defined the cost of their pain? Has the Executive Sponsor shared ROI projections with finance or the Decision Maker? Have financial terms been agreed?`,\n    score_rubric: '0=benefits unknown, 1=believe their situation causing pain, 2=defined cost of pain, 3=believe solution can address pain, 4=ES shared ROI with DM, 5=DM agreed to financial terms'\n  },\n  {\n    dimension: 'change',\n    query: `Has ${company} committed to change? Has the Potential Champion confirmed the PES will meet with us? Has the PES agreed they need to change? Has the Executive Sponsor chosen Clearwater to lead the change? Has the ES convinced the ultimate Decision Maker they must change?`,\n    score_rubric: '0=no one committed to change, 1=PC is open to change, 2=PC confirmed PES will meet us, 3=PES agreed they need to change, 4=ES chosen Clearwater to lead change, 5=ES convinced DM they must change'\n  },\n  {\n    dimension: 'control',\n    query: `What is our level of control over the sales process with ${company}? Do we understand their buying process? Have we created a Dual Action Plan (DAP) with dates and owners? Has the ES agreed to the DAP? Is the DAP on schedule and complete?`,\n    score_rubric: '0=buying process unknown, 1=Champion described process as they know it, 2=met with PES, 3=pain admitted and vision created for ES, 4=ES agreed to DAP, 5=DAP complete'\n  },\n  {\n    dimension: 'pe_sponsor',\n    query: `Who is the Potential Executive Sponsor or Executive Sponsor at ${company}? What is their level of engagement, support, and commitment? Are they actively helping us? Have they committed to the DAP and are they accessible?`,\n    score_rubric: '1=minimal engagement, 2=aware and open, 3=actively participating, 4=strong advocate, 5=fully committed and championing Clearwater internally'\n  },\n  {\n    dimension: 'critical_activity_stage',\n    query: `What is the current Clearwater sales stage and critical activity for ${company}? What critical activities have been completed (pre-qualify, champion identified, DAP agreed, co-create session, approach document, validation meeting)? What stage are we in - Discover, Qualify, Prove, Negotiate, or Close?`,\n    score_rubric: 'Map to CPS stages: Discover (1A-1D), Qualify (2A-2D), Prove (3A-3D), Negotiate (4A-4C), Close (5A-5D)'\n  },\n  {\n    dimension: 'dap',\n    query: `What is the status of the Dual Action Plan (DAP) with ${company}? What milestones have been completed? What milestones are open? Are there any gaps larger than 14 days between milestones? What is the next milestone and its due date? What is the agreed close or contract date?`,\n    score_rubric: 'Track: agreed=yes/no, milestones complete/total, 14-day gap rule, next milestone, timeline'\n  },\n  {\n    dimension: 'current_state',\n    query: `What is the current state of ${company}'s cybersecurity, compliance, and risk management program? What are their current organization structure, activities/processes, and technology/tools in their security program? What problems or gaps exist?`,\n    score_rubric: 'Describe: Organization, Activities, Technology'\n  },\n  {\n    dimension: 'future_state',\n    query: `What future state vision has ${company} described for their cybersecurity and compliance program? What organizational changes, process improvements, or technology goals have they expressed? What does their ideal improved state look like?`,\n    score_rubric: 'Describe: Organization, Activities, Technology'\n  },\n  {\n    dimension: 'stakeholders',\n    query: `Who are the key stakeholders at ${company}? What are the Champion's goals and success criteria? What are the Board or executive-level goals and success criteria? What matters most to each decision maker?`,\n    score_rubric: 'List: Champion goals, Board/exec goals, individual stakeholder success criteria'\n  },\n  {\n    dimension: 'risks',\n    query: `What are the strategic risks in the ${company} deal? Are there competitive threats, incumbent vendor relationships, internal political risks, budget risks, timeline risks, or other deal-threatening factors? Any signs of an incumbent vendor \"vulture maneuver\"?`,\n    score_rubric: 'List all identified risks with severity'\n  },\n  {\n    dimension: 'next_steps_and_actions',\n    query: `What are the most recent agreed next steps with ${company}? What specific action items were committed to by the prospect? What internal actions does the Clearwater AE need to take? When is the next scheduled meeting or deadline?`,\n    score_rubric: 'Extract: next step, date, prospect actions, internal AE actions'\n  },\n  {\n    dimension: 'services',\n    query: `What Clearwater services, products, or solutions have been discussed or implied in conversations with ${company}? What cybersecurity or compliance services are they interested in? What is the scope of potential engagement?`,\n    score_rubric: 'List specific services mentioned or implied'\n  }\n];\n\nreturn queries.map(q => ({ json: { ...deal, ...q } }));\n"
+      },
+      "id": "build-rag-queries",
+      "name": "Code: Build P2V2C2 RAG Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "notes": "Generates 15 targeted RAG queries — one per CPS dimension. Each query uses Clearwater-specific language (DAP, PES, ES, Champion)."
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-text",
+        "qdrantCollection": {
+          "value": "deals",
+          "mode": "id"
+        },
+        "prompt": "={{ $json.query }}",
+        "topK": 6,
+        "options": {
+          "host": "http://qdrant:6333",
+          "filter": "={{ JSON.stringify({ must: [{ key: 'deal_id', match: { value: $json.deal_id } }] }) }}"
+        }
+      },
+      "id": "qdrant-retrieve",
+      "name": "Qdrant: Retrieve per Dimension",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
+      "position": [940, 300],
+      "credentials": {
+        "qdrantApi": { "id": "qdrant-cred", "name": "Qdrant Local" }
+      },
+      "notes": "Retrieves top-6 chunks per dimension, filtered strictly to the deal's namespace."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all RAG results by dimension\n// Group chunks by dimension for the master scoring prompt\nconst allResults = items;\nconst grouped = {};\n\nfor (const item of allResults) {\n  const dim = item.json.dimension;\n  if (!grouped[dim]) {\n    grouped[dim] = {\n      dimension: dim,\n      query: item.json.query,\n      score_rubric: item.json.score_rubric,\n      retrieved_text: item.json.text || item.json.document || '',\n      deal_id: item.json.deal_id,\n      company_name: item.json.company_name,\n      deal_stage: item.json.deal_stage,\n      salesforce_stage: item.json.salesforce_stage,\n      close_date: item.json.close_date,\n      deal_value_usd: item.json.deal_value_usd,\n      forecast_category: item.json.forecast_category\n    };\n  } else {\n    grouped[dim].retrieved_text += '\\n\\n---\\n\\n' + (item.json.text || item.json.document || '');\n  }\n}\n\n// Return as single item with all dimensions grouped\nreturn [{ json: { \n  deal_id: allResults[0]?.json?.deal_id,\n  company_name: allResults[0]?.json?.company_name,\n  salesforce_stage: allResults[0]?.json?.salesforce_stage,\n  deal_stage: allResults[0]?.json?.deal_stage,\n  close_date: allResults[0]?.json?.close_date,\n  deal_value_usd: allResults[0]?.json?.deal_value_usd,\n  forecast_category: allResults[0]?.json?.forecast_category,\n  dimensions: grouped\n} }];\n"
+      },
+      "id": "aggregate-rag-results",
+      "name": "Code: Aggregate RAG Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 300],
+      "notes": "Groups all retrieved chunks by CPS dimension for the master scoring prompt."
+    },
+    {
+      "parameters": {
+        "model": "claude-opus-4-6",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ \nconst d = $json;\nconst dims = d.dimensions || {};\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are an expert sales analyst for Clearwater Security & Compliance, specializing in the Clearwater Performance Selling (CPS) methodology and the P2V2C2 deal qualification framework.\n\nClearwater sells cybersecurity, risk management, and compliance services to healthcare organizations.\n\nYou must analyze all retrieved deal evidence below and produce a COMPLETE deal health assessment in valid JSON. Use ONLY evidence from the retrieved content — never invent facts. If evidence is absent for a field, use null or an empty array.\n\n## DEAL INFO\nAccount: ${d.company_name}\nDeal ID: ${d.deal_id}\nSalesforce Stage: ${d.salesforce_stage || 'Unknown'}\nClose Date: ${d.close_date || 'TBD'}\nDeal Value: ${d.deal_value_usd ? '$' + d.deal_value_usd.toLocaleString() : 'Unknown'}\nForecast Category: ${d.forecast_category || 'Pipeline'}\nToday: ${today}\n\n## P2V2C2 SCORING GUIDE\nEach dimension scored 0-5:\n- Pain: 0=no pain known → 5=ES agreed pain large enough to change\n- Power: 0=no idea who power is → 5=DAP steps on schedule  \n- Vision: 0=no idea of needs → 5=ES painting vision to others in org\n- Value: 0=benefits unknown → 5=DM agreed to financial terms\n- Change: 0=no one committed → 5=ES convinced DM they must change\n- Control: 0=buying process unknown → 5=DAP complete\n\n## CPS SALES STAGES\n1=Discover, 2=Qualify, 3=Prove, 4=Negotiate, 5=Close\nCritical Activity Stages: 1A/1B/1C/1D, 2A/2B/2C/2D, 3A/3B/3C/3D, 4A/4B/4C, 5A/5B/5C/5D\n\n## RETRIEVED EVIDENCE BY DIMENSION\n\n${Object.entries(dims).map(([dim, data]) => {\n  return `### ${dim.toUpperCase()}\\nQuery: ${data.query}\\n\\nEvidence:\\n${data.retrieved_text || '[No evidence retrieved]'}\\n`;\n}).join('\\n---\\n')}\n\n## REQUIRED OUTPUT\nReturn ONLY this JSON structure (no markdown, no code fences, no preamble):\n\n{\n  \"account\": \"${d.company_name}\",\n  \"date\": \"${today}\",\n  \"salesforce_stage\": \"[Stage Name | Critical Activity e.g. Prove | 3B: Document Approach]\",\n  \"critical_activity_stage\": \"[e.g. 3B: Document Approach]\",\n  \"close_date\": \"[YYYY-MM-DD or TBD]\",\n  \"forecast_category\": \"[Pipeline|Upside|Commit]\",\n  \"deal_value_usd\": ${d.deal_value_usd || null},\n  \"p2v2c2\": {\n    \"pain\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"power\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"vision\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"value\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"change\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"control\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" }\n  },\n  \"p2v2c2_total\": 0,\n  \"pe_sponsor_score\": 0,\n  \"pe_sponsor_justification\": \"...\",\n  \"dap\": {\n    \"exists\": false,\n    \"agreed\": false,\n    \"milestones_total\": 14,\n    \"milestones_complete\": 0,\n    \"has_14_day_gap\": false,\n    \"next_milestone\": \"...\",\n    \"next_milestone_date\": \"YYYY-MM-DD\",\n    \"summary\": \"...\"\n  },\n  \"current_state\": {\n    \"organization\": \"...\",\n    \"activities\": \"...\",\n    \"technology\": \"...\"\n  },\n  \"future_state\": {\n    \"organization\": \"...\",\n    \"activities\": \"...\",\n    \"technology\": \"...\"\n  },\n  \"champion_name\": \"...\",\n  \"executive_sponsor_name\": \"...\",\n  \"key_stakeholder_success_criteria\": \"...\",\n  \"risks\": [\"...\"],\n  \"next_step\": \"...\",\n  \"next_step_date\": \"YYYY-MM-DD\",\n  \"call_summary\": \"...\",\n  \"highlights\": [\"...\"],\n  \"action_items_prospect\": [\"...\"],\n  \"action_items_internal\": [\"...\"],\n  \"internal_actions\": [\"...\"],\n  \"services_narrative\": \"...\",\n  \"general_narrative\": \"...\",\n  \"internal_team_update\": \"[TWO PARAGRAPHS. No bullets. Analytical tone. Reference PE/Executive Sponsor air cover where applicable. Written as a mandate to the internal team. Example: 'The Acme Health engagement has reached an inflection point...' Second paragraph: specific recommended actions and priorities for the team.]\"\n}`;\n}}\n"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 4096
+        }
+      },
+      "id": "claude-scorer",
+      "name": "Claude Opus: P2V2C2 Scorer",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1380, 300],
+      "credentials": {
+        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
+      },
+      "notes": "Claude Opus 4.6 generates all 22 deal health artifacts from retrieved evidence. Uses Clearwater CPS language precisely."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's JSON response and compute derived fields\nconst rawResponse = items[0].json.content || items[0].json.text || '{}';\nconst dealContext = $('Code: Aggregate RAG Results').first().json;\nconst triggerData = $('Webhook: Health Trigger').first()?.json?.body || {};\n\nlet scored;\ntry {\n  const cleaned = rawResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scored = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { error: 'Parse failed', raw: rawResponse.substring(0, 500) } }];\n}\n\n// Compute p2v2c2 total\nconst p = scored.p2v2c2 || {};\nscored.p2v2c2_total = (p.pain?.score || 0) + (p.power?.score || 0) + (p.vision?.score || 0) + \n                      (p.value?.score || 0) + (p.change?.score || 0) + (p.control?.score || 0);\n\n// Flatten for Postgres insert\nreturn [{ json: {\n  deal_id: dealContext.deal_id,\n  trigger_message_id: triggerData.trigger_message_id || null,\n  salesforce_stage: scored.salesforce_stage,\n  deal_stage: dealContext.deal_stage,\n  critical_activity_stage: scored.critical_activity_stage,\n  pain_score: p.pain?.score || 0,\n  pain_justification: p.pain?.justification || null,\n  pain_evidence_source: p.pain?.evidence_source || null,\n  power_score: p.power?.score || 0,\n  power_justification: p.power?.justification || null,\n  power_evidence_source: p.power?.evidence_source || null,\n  vision_score: p.vision?.score || 0,\n  vision_justification: p.vision?.justification || null,\n  vision_evidence_source: p.vision?.evidence_source || null,\n  value_score: p.value?.score || 0,\n  value_justification: p.value?.justification || null,\n  value_evidence_source: p.value?.evidence_source || null,\n  change_score: p.change?.score || 0,\n  change_justification: p.change?.justification || null,\n  change_evidence_source: p.change?.evidence_source || null,\n  control_score: p.control?.score || 0,\n  control_justification: p.control?.justification || null,\n  control_evidence_source: p.control?.evidence_source || null,\n  p2v2c2_total_computed: scored.p2v2c2_total,\n  pe_sponsor_score: scored.pe_sponsor_score || 0,\n  pe_sponsor_justification: scored.pe_sponsor_justification || null,\n  dap_exists: scored.dap?.exists || false,\n  dap_agreed: scored.dap?.agreed || false,\n  dap_milestones_complete: scored.dap?.milestones_complete || 0,\n  dap_has_14_day_gap: scored.dap?.has_14_day_gap || false,\n  dap_next_milestone: scored.dap?.next_milestone || null,\n  dap_next_milestone_date: scored.dap?.next_milestone_date || null,\n  dap_summary: scored.dap?.summary || null,\n  close_date: scored.close_date || null,\n  forecast_category: scored.forecast_category || 'Pipeline',\n  current_state_org: scored.current_state?.organization || null,\n  current_state_activities: scored.current_state?.activities || null,\n  current_state_technology: scored.current_state?.technology || null,\n  future_state_org: scored.future_state?.organization || null,\n  future_state_activities: scored.future_state?.activities || null,\n  future_state_technology: scored.future_state?.technology || null,\n  champion_name: scored.champion_name || null,\n  executive_sponsor_name: scored.executive_sponsor_name || null,\n  key_stakeholder_success_criteria: scored.key_stakeholder_success_criteria || null,\n  risks: scored.risks || [],\n  next_step: scored.next_step || null,\n  next_step_date: scored.next_step_date || null,\n  call_summary: scored.call_summary || null,\n  highlights: scored.highlights || [],\n  action_items_prospect: scored.action_items_prospect || [],\n  action_items_internal: scored.action_items_internal || [],\n  internal_actions: scored.internal_actions || [],\n  services_narrative: scored.services_narrative || null,\n  general_narrative: scored.general_narrative || null,\n  internal_team_update: scored.internal_team_update || null\n} }];\n"
+      },
+      "id": "parse-scores",
+      "name": "Code: Parse & Flatten Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300],
+      "notes": "Parses Claude JSON, computes totals, flattens all 22 artifacts for Postgres insert."
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "deal_health",
+        "columns": "deal_id, trigger_message_id, salesforce_stage, deal_stage, critical_activity_stage, pain_score, pain_justification, pain_evidence_source, power_score, power_justification, power_evidence_source, vision_score, vision_justification, vision_evidence_source, value_score, value_justification, value_evidence_source, change_score, change_justification, change_evidence_source, control_score, control_justification, control_evidence_source, pe_sponsor_score, pe_sponsor_justification, dap_exists, dap_agreed, dap_milestones_complete, dap_has_14_day_gap, dap_next_milestone, dap_next_milestone_date, dap_summary, close_date, forecast_category, current_state_org, current_state_activities, current_state_technology, future_state_org, future_state_activities, future_state_technology, champion_name, executive_sponsor_name, key_stakeholder_success_criteria, risks, next_step, next_step_date, call_summary, highlights, action_items_prospect, action_items_internal, internal_actions, services_narrative, general_narrative, internal_team_update",
+        "additionalFields": {}
+      },
+      "id": "store-health-scores",
+      "name": "Postgres: Store Health Scores",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1820, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Inserts all 22 deal health artifacts into deal_health table. Historical record — never updates, always inserts."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "deals",
+        "updateKey": "deal_id",
+        "columns": "salesforce_stage, deal_stage, close_date, forecast_category, updated_at",
+        "additionalFields": {}
+      },
+      "id": "update-deal-record",
+      "name": "Postgres: Update Deal Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2040, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Updates the master deal record with latest stage, close date, and forecast from the scoring run."
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "query": "SELECT pain_score + power_score + vision_score + value_score + change_score + control_score as prev_total FROM deal_health WHERE deal_id = $1 AND scored_at < NOW() - INTERVAL '1 minute' ORDER BY scored_at DESC LIMIT 1",
+        "additionalFields": {
+          "queryParams": "={{ [$json.deal_id] }}"
+        }
+      },
+      "id": "get-prev-score",
+      "name": "Postgres: Get Previous Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2260, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      },
+      "notes": "Fetches previous score for trend direction computation."
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = items[0].json;\nconst prevScore = $('Postgres: Get Previous Score').first()?.json?.prev_total;\nconst currentTotal = current.p2v2c2_total_computed || 0;\n\nlet trend = 'stable';\nif (prevScore !== undefined && prevScore !== null) {\n  const delta = currentTotal - prevScore;\n  if (delta > 1) trend = 'improving';\n  else if (delta < -1) trend = 'declining';\n}\n\nreturn [{ json: { \n  deal_id: current.deal_id, \n  trend_direction: trend,\n  score_vs_previous: prevScore !== null && prevScore !== undefined ? currentTotal - prevScore : 0,\n  current_total: currentTotal,\n  alert_needed: trend === 'declining' && currentTotal < 12\n} }];\n"
+      },
+      "id": "compute-trend",
+      "name": "Code: Compute Trend",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2480, 300],
+      "notes": "Computes trend direction (improving/stable/declining) and flags alerts for low-scoring declining deals."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "deal_health",
+        "updateKey": "deal_id",
+        "columns": "trend_direction, score_vs_previous",
+        "additionalFields": {}
+      },
+      "id": "update-trend",
+      "name": "Postgres: Update Trend",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2700, 300],
+      "credentials": {
+        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.alert_needed }}", "rightValue": true, "operator": { "operation": "equals" } }]
+        }
+      },
+      "id": "check-alert",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2920, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.AUSTIN_EMAIL }}",
+        "subject": "={{ '⚠️ Deal Alert: ' + $('Code: Aggregate RAG Results').first().json.company_name + ' score declining (' + $json.current_total + '/30)' }}",
+        "message": "={{ 'Your deal with ' + $('Code: Aggregate RAG Results').first().json.company_name + ' has a declining P2V2C2 score.\\n\\nCurrent score: ' + $json.current_total + '/30\\nPrevious score: ' + ($json.current_total - $json.score_vs_previous) + '/30\\nChange: ' + $json.score_vs_previous + '\\n\\nCheck the Metabase dashboard for full details: http://localhost:3000' }}",
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Gmail: Send Decline Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [3140, 200],
+      "operation": "send",
+      "credentials": {
+        "gmailOAuth2": { "id": "gmail-send-cred", "name": "Gmail Send" }
+      },
+      "notes": "Sends alert to Austin when a deal score is declining and below 12/30."
+    }
+  ],
+  "connections": {
+    "Webhook: Health Trigger": { "main": [[{ "node": "Postgres: Get Deal Context", "type": "main", "index": 0 }]] },
+    "Schedule: Nightly Rescore (8pm ET)": { "main": [[{ "node": "Postgres: Get Deal Context", "type": "main", "index": 0 }]] },
+    "Postgres: Get Deal Context": { "main": [[{ "node": "Code: Build P2V2C2 RAG Queries", "type": "main", "index": 0 }]] },
+    "Code: Build P2V2C2 RAG Queries": { "main": [[{ "node": "Qdrant: Retrieve per Dimension", "type": "main", "index": 0 }]] },
+    "Qdrant: Retrieve per Dimension": { "main": [[{ "node": "Code: Aggregate RAG Results", "type": "main", "index": 0 }]] },
+    "Code: Aggregate RAG Results": { "main": [[{ "node": "Claude Opus: P2V2C2 Scorer", "type": "main", "index": 0 }]] },
+    "Claude Opus: P2V2C2 Scorer": { "main": [[{ "node": "Code: Parse & Flatten Scores", "type": "main", "index": 0 }]] },
+    "Code: Parse & Flatten Scores": { "main": [[{ "node": "Postgres: Store Health Scores", "type": "main", "index": 0 }]] },
+    "Postgres: Store Health Scores": { "main": [[{ "node": "Postgres: Update Deal Record", "type": "main", "index": 0 }]] },
+    "Postgres: Update Deal Record": { "main": [[{ "node": "Postgres: Get Previous Score", "type": "main", "index": 0 }]] },
+    "Postgres: Get Previous Score": { "main": [[{ "node": "Code: Compute Trend", "type": "main", "index": 0 }]] },
+    "Code: Compute Trend": { "main": [[{ "node": "Postgres: Update Trend", "type": "main", "index": 0 }]] },
+    "Postgres: Update Trend": { "main": [[{ "node": "Alert Needed?", "type": "main", "index": 0 }]] },
+    "Alert Needed?": {
+      "main": [
+        [{ "node": "Gmail: Send Decline Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [{ "name": "clearwater" }, { "name": "deal-health" }, { "name": "cps" }, { "name": "phase-2" }]
+}

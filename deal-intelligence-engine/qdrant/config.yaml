@@ -1,0 +1,30 @@
+# Qdrant configuration for Clearwater Deal Intelligence Engine
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  max_request_size_mb: 32
+
+storage:
+  storage_path: /qdrant/storage
+  snapshots_path: /qdrant/snapshots
+  # Store vectors on disk (SSD) — reduces RAM usage for large deal corpus
+  on_disk_payload: true
+
+# Collection defaults — overridden per-collection at creation time
+collection:
+  # HNSW index for fast approximate nearest neighbor search
+  hnsw_config:
+    m: 16
+    ef_construct: 100
+    full_scan_threshold: 10000
+    on_disk: false
+
+  # Quantization: compress vectors to reduce storage by ~4x with minimal recall loss
+  quantization_config:
+    scalar:
+      type: int8
+      quantile: 0.99
+      always_ram: true
+
+log_level: INFO
