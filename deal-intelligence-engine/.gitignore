@@ -1,0 +1,24 @@
+# Secrets — NEVER commit
+.env
+*.env.local
+
+# n8n credentials (contain API keys)
+n8n/credentials/*.json
+
+# Generated files
+templates/pdf/generated/
+templates/pptx/generated/
+*.pdf
+*.pptx
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# Docker volumes (local data)
+postgres_data/
+qdrant_data/
+redis_data/
+n8n_data/
