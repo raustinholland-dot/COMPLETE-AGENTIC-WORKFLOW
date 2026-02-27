@@ -106,13 +106,11 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "={{ $env.ANTHROPIC_API_KEY }}"
-            },
             {
               "name": "anthropic-version",
               "value": "2023-06-01"
@@ -126,17 +124,23 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a deal attribution classifier for Clearwater Security & Compliance. Analyze this email and return ONLY a JSON object (no markdown, no code fences) with these exact fields:\\n{\\n  \\\"company_name\\\": \\\"<company name or Unknown>\\\",\\n  \\\"sender_domain\\\": \\\"<domain>\\\",\\n  \\\"doc_type\\\": \\\"<email_body|call_transcript|pdf_attachment|pptx_attachment|csv_attachment|other>\\\",\\n  \\\"deal_indicators\\\": [],\\n  \\\"guessed_deal_company\\\": \\\"<company name>\\\",\\n  \\\"confidence\\\": \\\"<high|medium|low>\\\",\\n  \\\"confidence_score\\\": 0.0,\\n  \\\"reasoning\\\": \\\"<one sentence>\\\"\\n}\\n\\nEmail details:\\nFrom: {{ $('Gmail: Get Full Message').item.json.from }}\\nSubject: {{ $('Gmail: Get Full Message').item.json.subject }}\\nBody (first 2000 chars): {{ ($('Gmail: Get Full Message').item.json.text ?? $('Gmail: Get Full Message').item.json.snippet ?? '').slice(0, 2000) }}\"\n    }\n  ]\n}"
+        "body": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a deal attribution classifier for Clearwater Security & Compliance. Analyze this email and return ONLY a JSON object (no markdown, no code fences) with these exact fields:\\n{\\n  \\\"company_name\\\": \\\"<company name or Unknown>\\\",\\n  \\\"sender_domain\\\": \\\"<domain from sender email>\\\",\\n  \\\"doc_type\\\": \\\"<email_body|call_transcript|pdf_attachment|pptx_attachment|csv_attachment|other>\\\",\\n  \\\"deal_indicators\\\": [],\\n  \\\"guessed_deal_company\\\": \\\"<company name>\\\",\\n  \\\"confidence\\\": \\\"<high|medium|low>\\\",\\n  \\\"confidence_score\\\": 0.0,\\n  \\\"reasoning\\\": \\\"<one sentence>\\\"\\n}\\n\\nEmail details:\\nFrom: {{ $('Gmail: Get Full Message').item.json.from }}\\nSubject: {{ $('Gmail: Get Full Message').item.json.subject }}\\nBody (first 2000 chars): {{ ($('Gmail: Get Full Message').item.json.text ?? $('Gmail: Get Full Message').item.json.snippet ?? '').slice(0, 2000) }}\"\n    }\n  ]\n}"
       },
       "id": "classify-email",
       "name": "AI: Classify & Attribute Email",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1120, 200]
+      "position": [1120, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "6NnFWUY71nO8HiT2",
+          "name": "Anthropic account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Parse Anthropic API response\nconst response = $input.first().json;\n\n// Anthropic API returns: { content: [{ type: 'text', text: '...' }] }\nconst rawText = response.content?.[0]?.text || '{}';\n\nlet classification;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error: ' + e.message\n  };\n}\n\n// Get original email data\nconst emailData = $('Gmail: Get Full Message').first().json;\n\nreturn [{\n  json: {\n    ...classification,\n    message_id: emailData.id,\n    subject: emailData.subject,\n    sender_email: emailData.from,\n    email_date: emailData.date,\n    text: emailData.text || emailData.snippet || '',\n    html: emailData.html || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
+        "jsCode": "// Parse Anthropic node response\n// Native n8n Anthropic node returns: { text: '...' }\n// HTTP fallback returns: { content: [{ type: 'text', text: '...' }] }\nconst response = $input.first().json;\nconst rawText = response.text || response.content?.[0]?.text || '{}';\n\nlet classification;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error: ' + e.message\n  };\n}\n\n// Get original email data\nconst emailData = $('Gmail: Get Full Message').first().json;\n\nreturn [{\n  json: {\n    ...classification,\n    message_id: emailData.id,\n    subject: emailData.subject,\n    sender_email: emailData.from,\n    email_date: emailData.date,\n    text: emailData.text || emailData.snippet || '',\n    html: emailData.html || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
       },
       "id": "parse-classification",
       "name": "Code: Parse Classification",
@@ -428,7 +432,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO ingestion_log (message_id, deal_id, attribution_confidence, attribution_status, sender_email, sender_domain, subject, doc_type, attachment_count, chunk_count, qdrant_namespace) VALUES ('{{ $json.message_id }}', '{{ $json.deal_id }}', '{{ $json.attribution_confidence }}', 'processed', '{{ $json.sender_email }}', '{{ $json.sender_domain }}', '{{ $json.subject }}', '{{ $json.doc_type }}', {{ $json.attachments ? $json.attachments.length : 0 }}, 0, '{{ $json.qdrant_namespace }}')",
+        "query": "=INSERT INTO ingestion_log (message_id, deal_id, attribution_confidence, attribution_status, sender_email, sender_domain, subject, doc_type, attachment_count, chunk_count, qdrant_namespace) VALUES ('{{ $('Code: Parse Classification').first().json.message_id }}', '{{ $('Code: Contextual Enrichment').first().json.deal_id }}', '{{ $('Code: Contextual Enrichment').first().json.attribution_confidence }}', 'processed', '{{ $('Code: Parse Classification').first().json.sender_email }}', '{{ $('Code: Parse Classification').first().json.sender_domain }}', '{{ $('Code: Parse Classification').first().json.subject }}', '{{ $('Code: Parse Classification').first().json.doc_type }}', 0, 0, '{{ $('Code: Contextual Enrichment').first().json.qdrant_namespace }}') ON CONFLICT (message_id) DO NOTHING",
         "options": {}
       },
       "id": "log-ingestion",
@@ -448,7 +452,7 @@
         "url": "http://localhost:5678/webhook/deal-health-trigger",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ deal_id: $json.deal_id, trigger_message_id: $json.message_id, trigger_type: 'new_ingestion' }) }}",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Contextual Enrichment').first().json.deal_id, trigger_message_id: $('Code: Contextual Enrichment').first().json.message_id, trigger_type: 'new_ingestion' }) }}",
         "options": {}
       },
       "id": "trigger-health-agent",
