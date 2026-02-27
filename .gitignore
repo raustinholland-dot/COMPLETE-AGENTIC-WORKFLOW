@@ -427,3 +427,12 @@ deal-intelligence-engine/DEPLOYMENT.md
 n8nac-skills
 n8nac-skills.cmd
 n8nac.cmd
+n8nac
+n8nac-config.json
+
+# Local data exports and reports
+*.csv
+workflows/
+
+# VS Code workspace settings (personal)
+.vscode/settings.json
