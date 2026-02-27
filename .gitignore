@@ -429,6 +429,7 @@ n8nac-skills.cmd
 n8nac.cmd
 n8nac
 n8nac-config.json
+AGENTS.md
 
 # Local data exports and reports
 *.csv
