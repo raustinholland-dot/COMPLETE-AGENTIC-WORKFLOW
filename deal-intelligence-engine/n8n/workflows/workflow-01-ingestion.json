@@ -1,10 +1,18 @@
 {
+  "id": "G6kZgyHCK0qHNhRj",
   "name": "CW-01: Deal Ingestion Pipeline",
+  "active": true,
   "nodes": [
     {
       "parameters": {
         "pollTimes": {
-          "item": [{ "mode": "everyX", "value": 5, "unit": "minutes" }]
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 1,
+              "unit": "minutes"
+            }
+          ]
         },
         "filters": {
           "readStatus": "unread",
@@ -20,12 +28,15 @@
       "typeVersion": 1,
       "position": [240, 300],
       "credentials": {
-        "gmailOAuth2": { "id": "gmail-ingestion-cred", "name": "Gmail Ingestion Inbox" }
-      },
-      "notes": "Watches dedicated ingestion Gmail address. Poll every 5 min for unread emails."
+        "gmailOAuth2": {
+          "id": "3MFqaWbGTKhRcnUF",
+          "name": "Gmail Ingestion Inbox"
+        }
+      }
     },
     {
       "parameters": {
+        "operation": "get",
         "messageId": "={{ $json.id }}",
         "options": {
           "downloadAttachments": true,
@@ -37,19 +48,18 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2,
       "position": [460, 300],
-      "operation": "get",
       "credentials": {
-        "gmailOAuth2": { "id": "gmail-ingestion-cred", "name": "Gmail Ingestion Inbox" }
-      },
-      "notes": "Gets full message body + attachments. Simplify=OFF to get raw HTML."
+        "gmailOAuth2": {
+          "id": "3MFqaWbGTKhRcnUF",
+          "name": "Gmail Ingestion Inbox"
+        }
+      }
     },
     {
       "parameters": {
-        "operation": "select",
-        "query": "SELECT id FROM ingestion_log WHERE message_id = $1 LIMIT 1",
-        "additionalFields": {
-          "queryParams": "={{ $json.id }}"
-        }
+        "operation": "executeQuery",
+        "query": "SELECT id FROM ingestion_log WHERE message_id = '{{ $json.id }}' LIMIT 1",
+        "options": {}
       },
       "id": "check-duplicate",
       "name": "Postgres: Check Duplicate",
@@ -57,71 +67,126 @@
       "typeVersion": 2,
       "position": [680, 300],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Deduplication check — skip if message_id already processed."
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": false },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
-              "leftValue": "={{ $json.length }}",
-              "rightValue": 0,
-              "operator": { "operation": "equals" }
+              "id": "dedup-check",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
       "id": "is-new",
       "name": "Is New Email?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [900, 300],
-      "notes": "Only process emails not yet in ingestion_log."
+      "position": [900, 300]
     },
     {
       "parameters": {
-        "model": "claude-sonnet-4-6",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "role": "user",
-              "content": "={{ 'You are a deal attribution AI for Clearwater Security & Compliance. Analyze this email and:\n1. Identify the sender company name and domain\n2. Determine the document type (email_body / call_transcript / pdf_attachment / pptx_attachment / csv_attachment / other)\n3. Extract any deal indicators (company names, contact names, dates, deal-specific language)\n4. Guess the most likely active deal this belongs to based on the sender domain and content\n5. Rate your confidence: high (>80%), medium (50-80%), low (<50%)\n\nReturn ONLY valid JSON:\n{\n  \"company_name\": \"...\",\n  \"sender_domain\": \"...\",\n  \"doc_type\": \"...\",\n  \"deal_indicators\": [\"...\"],\n  \"guessed_deal_company\": \"...\",\n  \"confidence\": \"high|medium|low\",\n  \"confidence_score\": 0.0,\n  \"reasoning\": \"...\"\n}\n\nEmail subject: ' + $json.subject + '\\nSender: ' + $json.from + '\\nDate: ' + $json.date + '\\nBody preview (first 1000 chars):\\n' + ($json.snippet || '').substring(0, 1000) }}"
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
             }
           ]
         },
-        "options": {}
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a deal attribution classifier for Clearwater Security & Compliance. Analyze this email and return ONLY a JSON object (no markdown, no code fences) with these exact fields:\\n{\\n  \\\"company_name\\\": \\\"<company name or Unknown>\\\",\\n  \\\"sender_domain\\\": \\\"<domain>\\\",\\n  \\\"doc_type\\\": \\\"<email_body|call_transcript|pdf_attachment|pptx_attachment|csv_attachment|other>\\\",\\n  \\\"deal_indicators\\\": [],\\n  \\\"guessed_deal_company\\\": \\\"<company name>\\\",\\n  \\\"confidence\\\": \\\"<high|medium|low>\\\",\\n  \\\"confidence_score\\\": 0.0,\\n  \\\"reasoning\\\": \\\"<one sentence>\\\"\\n}\\n\\nEmail details:\\nFrom: {{ $('Gmail: Get Full Message').item.json.from }}\\nSubject: {{ $('Gmail: Get Full Message').item.json.subject }}\\nBody (first 2000 chars): {{ ($('Gmail: Get Full Message').item.json.text ?? $('Gmail: Get Full Message').item.json.snippet ?? '').slice(0, 2000) }}\"\n    }\n  ]\n}"
       },
       "id": "classify-email",
       "name": "AI: Classify & Attribute Email",
-      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-      "typeVersion": 1,
-      "position": [1120, 200],
-      "credentials": {
-        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
-      },
-      "notes": "Claude Sonnet classifies doc type and infers deal attribution with confidence score."
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Parse AI classification response\nconst aiResponse = items[0].json.content || items[0].json.text || '{}';\nlet classification;\ntry {\n  // Strip markdown code fences if present\n  const cleaned = aiResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: items[0].json.from?.split('@')[1]?.split('>')[0] || 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error'\n  };\n}\n\n// Get original email data from previous node\nconst emailData = $('Gmail: Get Full Message').first().json;\n\nreturn [{\n  json: {\n    ...classification,\n    message_id: emailData.id,\n    subject: emailData.subject,\n    sender_email: emailData.from,\n    email_date: emailData.date,\n    body_html: emailData.payload?.body?.data || '',\n    body_text: emailData.snippet || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
+        "jsCode": "// Parse Anthropic API response\nconst response = $input.first().json;\n\n// Anthropic API returns: { content: [{ type: 'text', text: '...' }] }\nconst rawText = response.content?.[0]?.text || '{}';\n\nlet classification;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error: ' + e.message\n  };\n}\n\n// Get original email data\nconst emailData = $('Gmail: Get Full Message').first().json;\n\nreturn [{\n  json: {\n    ...classification,\n    message_id: emailData.id,\n    subject: emailData.subject,\n    sender_email: emailData.from,\n    email_date: emailData.date,\n    text: emailData.text || emailData.snippet || '',\n    html: emailData.html || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
       },
       "id": "parse-classification",
       "name": "Code: Parse Classification",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1340, 200],
-      "notes": "Parses AI JSON response with fallback. Merges with email metadata."
+      "position": [1340, 200]
     },
     {
       "parameters": {
         "rules": {
           "values": [
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.confidence }}", "rightValue": "high", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "high" },
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.confidence }}", "rightValue": "medium", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "medium" },
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.confidence }}", "rightValue": "low", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "low" }
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.confidence }}",
+                    "rightValue": "high",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "high"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.confidence }}",
+                    "rightValue": "medium",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "medium"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.confidence }}",
+                    "rightValue": "low",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "low"
+            }
           ]
         }
       },
@@ -129,16 +194,13 @@
       "name": "Route by Confidence",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [1560, 200],
-      "notes": "High/medium confidence → auto-assign. Low confidence → queue for confirmation."
+      "position": [1560, 200]
     },
     {
       "parameters": {
-        "operation": "select",
-        "query": "SELECT deal_id, company_name FROM deals WHERE $1 = ANY(sender_domains) OR LOWER(company_name) LIKE LOWER($2) AND is_active = TRUE LIMIT 1",
-        "additionalFields": {
-          "queryParams": "={{ [$json.sender_domain, '%' + $json.guessed_deal_company + '%'] }}"
-        }
+        "operation": "executeQuery",
+        "query": "SELECT deal_id, company_name FROM deals WHERE '{{ $json.sender_domain }}' = ANY(sender_domains) OR LOWER(company_name) LIKE LOWER('%{{ $json.guessed_deal_company }}%') AND is_active = TRUE LIMIT 1",
+        "options": {}
       },
       "id": "lookup-deal-high",
       "name": "Postgres: Lookup Deal (High)",
@@ -146,17 +208,17 @@
       "typeVersion": 2,
       "position": [1780, 100],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
       }
     },
     {
       "parameters": {
-        "operation": "insert",
-        "table": "attribution_queue",
-        "columns": "message_id, sender_email, sender_domain, subject, email_date, ai_guess_company, ai_confidence, doc_type",
-        "additionalFields": {
-          "queryParams": "={{ [$json.message_id, $json.sender_email, $json.sender_domain, $json.subject, $json.email_date, $json.guessed_deal_company, $json.confidence_score, $json.doc_type] }}"
-        }
+        "operation": "executeQuery",
+        "query": "INSERT INTO attribution_queue (message_id, sender_email, sender_domain, subject, email_date, ai_guess_company, ai_confidence, doc_type) VALUES ('{{ $json.message_id }}', '{{ $json.sender_email }}', '{{ $json.sender_domain }}', '{{ $json.subject }}', '{{ $json.email_date }}', '{{ $json.guessed_deal_company }}', {{ $json.confidence_score }}, '{{ $json.doc_type }}')",
+        "options": {}
       },
       "id": "queue-for-confirm",
       "name": "Postgres: Queue for Confirmation",
@@ -164,29 +226,78 @@
       "typeVersion": 2,
       "position": [1780, 380],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Low confidence emails queued for Austin to confirm via chat widget."
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Build deal_id from matched deal or generate a slug\nconst emailData = items[0].json;\nconst dealLookup = $('Postgres: Lookup Deal (High)').first()?.json;\n\nlet deal_id = dealLookup?.deal_id;\nif (!deal_id) {\n  // Generate a slug from company name + year\n  const company = (emailData.guessed_deal_company || emailData.company_name || 'unknown')\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '_')\n    .replace(/_+/g, '_')\n    .substring(0, 32);\n  const year = new Date().getFullYear();\n  deal_id = `cw_${company}_${year}`;\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    deal_id,\n    qdrant_namespace: deal_id,\n    attribution_confidence: emailData.confidence\n  }\n}];\n"
+        "jsCode": "// Build deal_id from matched deal or generate a slug\nconst emailData = $input.first().json;\nconst dealLookup = $('Postgres: Lookup Deal (High)').first()?.json;\n\nlet deal_id = dealLookup?.deal_id;\nif (!deal_id) {\n  const company = (emailData.guessed_deal_company || emailData.company_name || 'unknown')\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '_')\n    .replace(/_+/g, '_')\n    .substring(0, 32);\n  const year = new Date().getFullYear();\n  deal_id = `cw_${company}_${year}`;\n}\n\nreturn [{\n  json: {\n    ...emailData,\n    deal_id,\n    qdrant_namespace: deal_id,\n    attribution_confidence: emailData.confidence\n  }\n}];\n"
       },
       "id": "assign-deal-id",
       "name": "Code: Assign Deal ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2000, 150],
-      "notes": "Assigns confirmed deal_id or generates new slug. Sets qdrant_namespace = deal_id."
+      "position": [2000, 150]
     },
     {
       "parameters": {
         "rules": {
           "values": [
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.doc_type }}", "rightValue": "email_body", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "email" },
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.doc_type }}", "rightValue": "call_transcript", "operator": { "operation": "contains" } }] }, "renameOutput": true, "outputKey": "transcript" },
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.doc_type }}", "rightValue": "pdf_attachment", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "pdf" },
-            { "conditions": { "conditions": [{ "leftValue": "={{ $json.doc_type }}", "rightValue": "other", "operator": { "operation": "equals" } }] }, "renameOutput": true, "outputKey": "other" }
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "email_body",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "call_transcript",
+                    "operator": { "operation": "contains" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "transcript"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "pdf_attachment",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "pdf"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "other",
+                    "operator": { "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "other"
+            }
           ]
         }
       },
@@ -194,19 +305,17 @@
       "name": "Route by Document Type",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [2220, 150],
-      "notes": "Routes to appropriate text extraction strategy by document type."
+      "position": [2220, 150]
     },
     {
       "parameters": {
-        "jsCode": "// Extract clean text from email body\n// Handles both plain text and HTML\nconst emailData = items[0].json;\n\nlet text = emailData.body_text || '';\n\n// If we have HTML, strip tags\nif (emailData.body_html) {\n  const htmlDecoded = Buffer.from(emailData.body_html, 'base64').toString('utf-8');\n  // Strip HTML tags and decode entities\n  text = htmlDecoded\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\n// Remove common boilerplate patterns\nconst boilerplatePatterns = [\n  /CONFIDENTIALITY NOTICE[\\s\\S]*?$/i,\n  /This email and any attachments[\\s\\S]*?$/i,\n  /DISCLAIMER[\\s\\S]*?$/i,\n  /Sent from my iPhone/i,\n  /Get Outlook for/i\n];\n\nfor (const pattern of boilerplatePatterns) {\n  text = text.replace(pattern, '');\n}\n\nreturn [{ json: { ...emailData, extracted_text: text.trim(), extraction_method: 'email_body' } }];\n"
+        "jsCode": "// Extract clean text from email body\nconst emailData = $input.first().json;\n\nlet text = emailData.text || emailData.snippet || '';\n\nif (!text && emailData.html) {\n  text = emailData.html\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nconst boilerplate = [\n  /CONFIDENTIALITY NOTICE[\\s\\S]*?$/i,\n  /This email and any attachments[\\s\\S]*?$/i,\n  /DISCLAIMER[\\s\\S]*?$/i,\n  /Sent from my iPhone/i,\n  /Get Outlook for/i\n];\nfor (const p of boilerplate) { text = text.replace(p, ''); }\n\nreturn [{ json: { ...emailData, extracted_text: text.trim(), extraction_method: 'email_body' } }];\n"
       },
       "id": "extract-email-body",
       "name": "Code: Extract Email Body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2440, 60],
-      "notes": "Extracts clean text from email body. Strips HTML tags and boilerplate signatures."
+      "position": [2440, 60]
     },
     {
       "parameters": {
@@ -217,45 +326,87 @@
       "name": "Extract from File (PDF/DOCX/TXT)",
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
-      "position": [2440, 200],
-      "notes": "Handles PDF, DOCX, TXT, PPTX, CSV attachments."
+      "position": [2440, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Merge extracted text back with email metadata\n// This node merges outputs from all extraction branches\nconst emailData = items[0].json;\nconst extractedText = emailData.text || emailData.extracted_text || emailData.body_text || '';\n\nreturn [{ json: { ...emailData, extracted_text: extractedText } }];\n"
+        "jsCode": "// Merge extracted text with email metadata\nconst emailData = $input.first().json;\nconst extractedText = emailData.extracted_text || emailData.text || emailData.snippet || '';\n\nreturn [{ json: { ...emailData, extracted_text: extractedText } }];\n"
       },
       "id": "merge-extracted",
       "name": "Code: Merge Extracted Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2660, 150],
-      "notes": "Normalizes extracted text regardless of source doc type."
+      "position": [2660, 150]
     },
     {
       "parameters": {
-        "jsCode": "// Contextual enrichment: prepend deal/doc context to extracted text\n// This dramatically improves RAG retrieval accuracy (Anthropic Contextual Retrieval pattern)\nconst data = items[0].json;\n\n// Fetch deal info from deals table (passed via merge or lookup)\nconst dealId = data.deal_id || 'unknown';\nconst companyName = data.company_name || data.guessed_deal_company || 'Unknown Company';\nconst docType = data.doc_type || 'email';\nconst emailDate = data.email_date ? new Date(data.email_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];\nconst senderEmail = data.sender_email || '';\n\nconst contextHeader = `[DEAL CONTEXT]\\nDeal: ${companyName} (ID: ${dealId})\\nDocument Type: ${docType}\\nDate: ${emailDate}\\nSource: ${senderEmail}\\n[END CONTEXT]\\n\\n`;\n\nconst enrichedText = contextHeader + (data.extracted_text || '');\n\nreturn [{ json: { ...data, enriched_text: enrichedText } }];\n"
+        "jsCode": "// Contextual enrichment: prepend deal/doc context to extracted text\nconst data = $input.first().json;\n\nconst dealId = data.deal_id || 'unknown';\nconst companyName = data.company_name || data.guessed_deal_company || 'Unknown Company';\nconst docType = data.doc_type || 'email';\nconst emailDate = data.email_date ? new Date(data.email_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];\nconst senderEmail = data.sender_email || '';\n\nconst contextHeader = `[DEAL CONTEXT]\\nDeal: ${companyName} (ID: ${dealId})\\nDocument Type: ${docType}\\nDate: ${emailDate}\\nSource: ${senderEmail}\\n[END CONTEXT]\\n\\n`;\n\nconst enrichedText = contextHeader + (data.extracted_text || '');\n\nreturn [{ json: { ...data, enriched_text: enrichedText } }];\n"
       },
       "id": "contextual-enrichment",
       "name": "Code: Contextual Enrichment",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2880, 150],
-      "notes": "Prepends deal context header to each document before chunking. Improves retrieval accuracy."
+      "position": [2880, 150]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "value": "deals",
+          "mode": "id"
+        },
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              { "name": "deal_id", "value": "={{ $('Code: Contextual Enrichment').item.json.deal_id }}" },
+              { "name": "company_name", "value": "={{ $('Code: Contextual Enrichment').item.json.company_name }}" },
+              { "name": "doc_type", "value": "={{ $('Code: Contextual Enrichment').item.json.doc_type }}" },
+              { "name": "sender_domain", "value": "={{ $('Code: Contextual Enrichment').item.json.sender_domain }}" },
+              { "name": "attribution_confidence", "value": "={{ $('Code: Contextual Enrichment').item.json.attribution_confidence }}" }
+            ]
+          }
+        }
+      },
+      "id": "qdrant-insert",
+      "name": "Qdrant: Insert Vectors",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
+      "position": [3320, 150],
+      "credentials": {
+        "qdrantApi": {
+          "id": "jAwMvJtzXvc1hi4I",
+          "name": "Qdrant Local"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "jsonData",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.enriched_text }}",
+        "options": {
+          "metadata": {
+            "metadataValues": []
+          }
+        }
+      },
+      "id": "default-data-loader",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [3100, 320]
     },
     {
       "parameters": {
         "chunkSize": 500,
         "chunkOverlap": 50,
-        "options": {
-          "splitCode": "markdown"
-        }
+        "options": {}
       },
       "id": "text-splitter",
       "name": "Recursive Text Splitter",
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
-      "position": [3100, 150],
-      "notes": "500 token chunks, 50 token overlap. Markdown-aware splitting."
+      "position": [3100, 320]
     },
     {
       "parameters": {
@@ -266,52 +417,35 @@
       "name": "OpenAI Embeddings",
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1,
-      "position": [3320, 150],
+      "position": [3320, 320],
       "credentials": {
-        "openAiApi": { "id": "openai-cred", "name": "OpenAI API" }
-      },
-      "notes": "text-embedding-3-small: 1536 dimensions, cost-effective, strong quality."
-    },
-    {
-      "parameters": {
-        "qdrantCollection": {
-          "value": "deals",
-          "mode": "id"
-        },
-        "options": {
-          "host": "http://qdrant:6333"
+        "openAiApi": {
+          "id": "0uPlAmGz2rZbF75R",
+          "name": "OpenAI API"
         }
-      },
-      "id": "qdrant-insert",
-      "name": "Qdrant: Insert Vectors",
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
-      "typeVersion": 1,
-      "position": [3540, 150],
-      "credentials": {
-        "qdrantApi": { "id": "qdrant-cred", "name": "Qdrant Local" }
-      },
-      "notes": "Inserts chunks into 'deals' collection. Payload includes full deal metadata for filtered retrieval."
+      }
     },
     {
       "parameters": {
-        "operation": "insert",
-        "table": "ingestion_log",
-        "columns": "message_id, deal_id, attribution_confidence, attribution_status, sender_email, sender_domain, subject, doc_type, attachment_count, chunk_count, qdrant_namespace",
-        "additionalFields": {}
+        "operation": "executeQuery",
+        "query": "INSERT INTO ingestion_log (message_id, deal_id, attribution_confidence, attribution_status, sender_email, sender_domain, subject, doc_type, attachment_count, chunk_count, qdrant_namespace) VALUES ('{{ $json.message_id }}', '{{ $json.deal_id }}', '{{ $json.attribution_confidence }}', 'processed', '{{ $json.sender_email }}', '{{ $json.sender_domain }}', '{{ $json.subject }}', '{{ $json.doc_type }}', {{ $json.attachments ? $json.attachments.length : 0 }}, 0, '{{ $json.qdrant_namespace }}')",
+        "options": {}
       },
       "id": "log-ingestion",
       "name": "Postgres: Log Ingestion",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
-      "position": [3760, 150],
+      "position": [3540, 150],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Records ingestion event. Prevents re-processing on next poll cycle."
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
     },
     {
       "parameters": {
-        "url": "http://n8n:5678/webhook/deal-health-trigger",
+        "url": "http://localhost:5678/webhook/deal-health-trigger",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ deal_id: $json.deal_id, trigger_message_id: $json.message_id, trigger_type: 'new_ingestion' }) }}",
@@ -321,22 +455,32 @@
       "name": "HTTP: Trigger Health Agent",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [3980, 150],
-      "notes": "Fires webhook to trigger Workflow 2 (Deal Health) for the affected deal."
+      "position": [3760, 150],
+      "continueOnFail": true
     }
   ],
   "connections": {
-    "Gmail: Watch Ingestion Inbox": { "main": [[{ "node": "Gmail: Get Full Message", "type": "main", "index": 0 }]] },
-    "Gmail: Get Full Message": { "main": [[{ "node": "Postgres: Check Duplicate", "type": "main", "index": 0 }]] },
-    "Postgres: Check Duplicate": { "main": [[{ "node": "Is New Email?", "type": "main", "index": 0 }]] },
+    "Gmail: Watch Ingestion Inbox": {
+      "main": [[{ "node": "Gmail: Get Full Message", "type": "main", "index": 0 }]]
+    },
+    "Gmail: Get Full Message": {
+      "main": [[{ "node": "Postgres: Check Duplicate", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Check Duplicate": {
+      "main": [[{ "node": "Is New Email?", "type": "main", "index": 0 }]]
+    },
     "Is New Email?": {
       "main": [
         [{ "node": "AI: Classify & Attribute Email", "type": "main", "index": 0 }],
         []
       ]
     },
-    "AI: Classify & Attribute Email": { "main": [[{ "node": "Code: Parse Classification", "type": "main", "index": 0 }]] },
-    "Code: Parse Classification": { "main": [[{ "node": "Route by Confidence", "type": "main", "index": 0 }]] },
+    "AI: Classify & Attribute Email": {
+      "main": [[{ "node": "Code: Parse Classification", "type": "main", "index": 0 }]]
+    },
+    "Code: Parse Classification": {
+      "main": [[{ "node": "Route by Confidence", "type": "main", "index": 0 }]]
+    },
     "Route by Confidence": {
       "main": [
         [{ "node": "Postgres: Lookup Deal (High)", "type": "main", "index": 0 }],
@@ -344,8 +488,12 @@
         [{ "node": "Postgres: Queue for Confirmation", "type": "main", "index": 0 }]
       ]
     },
-    "Postgres: Lookup Deal (High)": { "main": [[{ "node": "Code: Assign Deal ID", "type": "main", "index": 0 }]] },
-    "Code: Assign Deal ID": { "main": [[{ "node": "Route by Document Type", "type": "main", "index": 0 }]] },
+    "Postgres: Lookup Deal (High)": {
+      "main": [[{ "node": "Code: Assign Deal ID", "type": "main", "index": 0 }]]
+    },
+    "Code: Assign Deal ID": {
+      "main": [[{ "node": "Route by Document Type", "type": "main", "index": 0 }]]
+    },
     "Route by Document Type": {
       "main": [
         [{ "node": "Code: Extract Email Body", "type": "main", "index": 0 }],
@@ -354,20 +502,43 @@
         [{ "node": "Extract from File (PDF/DOCX/TXT)", "type": "main", "index": 0 }]
       ]
     },
-    "Code: Extract Email Body": { "main": [[{ "node": "Code: Merge Extracted Text", "type": "main", "index": 0 }]] },
-    "Extract from File (PDF/DOCX/TXT)": { "main": [[{ "node": "Code: Merge Extracted Text", "type": "main", "index": 0 }]] },
-    "Code: Merge Extracted Text": { "main": [[{ "node": "Code: Contextual Enrichment", "type": "main", "index": 0 }]] },
-    "Code: Contextual Enrichment": { "main": [[{ "node": "Recursive Text Splitter", "type": "main", "index": 0 }]] },
-    "Recursive Text Splitter": { "main": [[{ "node": "OpenAI Embeddings", "type": "main", "index": 0 }]] },
-    "OpenAI Embeddings": { "main": [[{ "node": "Qdrant: Insert Vectors", "type": "main", "index": 0 }]] },
-    "Qdrant: Insert Vectors": { "main": [[{ "node": "Postgres: Log Ingestion", "type": "main", "index": 0 }]] },
-    "Postgres: Log Ingestion": { "main": [[{ "node": "HTTP: Trigger Health Agent", "type": "main", "index": 0 }]] }
+    "Code: Extract Email Body": {
+      "main": [[{ "node": "Code: Merge Extracted Text", "type": "main", "index": 0 }]]
+    },
+    "Extract from File (PDF/DOCX/TXT)": {
+      "main": [[{ "node": "Code: Merge Extracted Text", "type": "main", "index": 0 }]]
+    },
+    "Code: Merge Extracted Text": {
+      "main": [[{ "node": "Code: Contextual Enrichment", "type": "main", "index": 0 }]]
+    },
+    "Code: Contextual Enrichment": {
+      "main": [[{ "node": "Qdrant: Insert Vectors", "type": "main", "index": 0 }]]
+    },
+    "Qdrant: Insert Vectors": {
+      "main": [[{ "node": "Postgres: Log Ingestion", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Log Ingestion": {
+      "main": [[{ "node": "HTTP: Trigger Health Agent", "type": "main", "index": 0 }]]
+    },
+    "Recursive Text Splitter": {
+      "ai_textSplitter": [[{ "node": "Default Data Loader", "type": "ai_textSplitter", "index": 0 }]]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [[{ "node": "Qdrant: Insert Vectors", "type": "ai_embedding", "index": 0 }]]
+    },
+    "Default Data Loader": {
+      "ai_document": [[{ "node": "Qdrant: Insert Vectors", "type": "ai_document", "index": 0 }]]
+    }
   },
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "errorWorkflow": "",
+    "saveDataSuccessExecution": "all"
   },
-  "tags": [{ "name": "clearwater" }, { "name": "ingestion" }, { "name": "phase-1" }]
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "tags": []
 }

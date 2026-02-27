@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\(''result'',{}\\).get\\(''status'',''no status''\\)\\)\")",
+      "mcp__clearwater-n8n__n8n_get_workflow",
+      "mcp__clearwater-n8n__n8n_update_partial_workflow",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); wf=json.loads\\(data[0][''text'']\\); [print\\(n[''id''], ''|'', n[''name'']\\) for n in wf[''data''][''nodes'']]\")",
+      "Bash(python3 -c \":*)"
+    ]
+  }
+}
