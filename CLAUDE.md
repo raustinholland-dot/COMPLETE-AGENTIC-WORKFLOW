@@ -122,7 +122,7 @@ CLAUDE.md                           # This file
 ### Workflow Chain
 
 ```
-Gmail Trigger (every 5 min)
+Gmail Trigger (every 1 min)
   → Workflow 1: Ingestion Pipeline
       → classify → dedupe → chunk → embed → Qdrant insert
       → POST /webhook/deal-health-trigger
@@ -130,7 +130,7 @@ Gmail Trigger (every 5 min)
               → 15 RAG queries (one per CPS dimension)
               → Claude Opus scores all 22 artifacts
               → Postgres: insert to deal_health table
-              → Nightly rescore also runs at 8pm ET
+              → Nightly rescore also runs at 9pm ET
 
 n8n Chat Widget
   → Workflow 4: Q&A Chat Agent (Phase 4, pending)
