@@ -230,7 +230,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT deal_id, company_name FROM deals WHERE '{{ $json.sender_domain }}' = ANY(sender_domains) OR LOWER(company_name) LIKE LOWER('%{{ $json.guessed_deal_company }}%') AND is_active = TRUE LIMIT 1",
+        "query": "=SELECT deal_id, company_name FROM deals WHERE ('{{ $json.sender_domain }}' = ANY(sender_domains) OR LOWER(company_name) LIKE LOWER('%{{ $json.guessed_deal_company }}%')) AND is_active = TRUE LIMIT 1",
         "options": {}
       },
       "id": "lookup-deal-high",
@@ -612,19 +612,6 @@
       "parameters": {
         "jsCode": "// Count how many chunks were inserted into Qdrant\nconst chunks = $input.all();\nconst chunkCount = chunks.length;\n// Pass enrichment data from first chunk + chunk count\nconst enrichData = $('Code: Contextual Enrichment').first().json;\nreturn [{ json: { ...enrichData, chunk_count: chunkCount } }];"
       }
-    },
-    {
-      "id": "qdrant-set-payload",
-      "name": "Code: Set Qdrant Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3760,
-        150
-      ],
-      "parameters": {
-        "jsCode": "\n// After Qdrant insert, set metadata payload on all newly inserted points.\n// We scroll for points where content contains our message_id marker,\n// then overwrite their payload with correct metadata.\n\nconst enrichData = $('Code: Contextual Enrichment').first().json;\nconst messageId = enrichData.message_id;\nconst dealId = enrichData.deal_id;\nconst companyName = enrichData.company_name || enrichData.guessed_deal_company || '';\nconst docType = enrichData.doc_type || 'email_body';\nconst senderDomain = enrichData.sender_domain || '';\nconst confidence = enrichData.attribution_confidence || enrichData.confidence || 'medium';\nconst emailDate = enrichData.email_date || new Date().toISOString();\n\n// Scroll Qdrant for all points (we'll filter by content containing message_id)\nconst scrollResp = await $http.request({\n  method: 'POST',\n  url: 'http://qdrant:6333/collections/deals/points/scroll',\n  body: { limit: 100, with_payload: true, with_vector: false },\n  json: true\n});\n\nconst allPoints = scrollResp.result?.points || [];\n\n// Find points that belong to this ingestion (content contains our message_id)\nconst ourPoints = allPoints.filter(p => \n  (p.payload?.content || '').includes(messageId) ||\n  !p.payload?.message_id  // Also grab points with no message_id set yet\n);\n\nconst pointIds = ourPoints.map(p => p.id);\n\nif (pointIds.length === 0) {\n  return [{ json: { ...enrichData, payload_set: false, reason: 'no matching points' } }];\n}\n\n// Set payload on matching points by ID\nawait $http.request({\n  method: 'POST',\n  url: 'http://qdrant:6333/collections/deals/points/payload',\n  body: {\n    payload: {\n      deal_id: dealId,\n      company_name: companyName,\n      doc_type: docType,\n      sender_domain: senderDomain,\n      attribution_confidence: confidence,\n      date_created: emailDate,\n      message_id: messageId\n    },\n    points: pointIds\n  },\n  json: true\n});\n\nreturn [{ json: { ...enrichData, payload_set: true, points_updated: pointIds.length } }];\n"
-      }
     }
   ],
   "connections": {
@@ -836,6 +823,11 @@
             "node": "Qdrant: Insert Vectors",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Default Data Loader",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -896,17 +888,6 @@
       ]
     },
     "Code: Count Chunks": {
-      "main": [
-        [
-          {
-            "node": "Code: Set Qdrant Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code: Set Qdrant Payload": {
       "main": [
         [
           {

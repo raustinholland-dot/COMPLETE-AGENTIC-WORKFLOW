@@ -433,7 +433,7 @@ AGENTS.md
 
 # Local data exports and reports
 *.csv
-workflows/
+/workflows/
 
 # VS Code workspace settings (personal)
 .vscode/settings.json
