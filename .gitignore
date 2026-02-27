@@ -416,3 +416,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+e2e-screenshots
+
+# Local secrets and credentials (contain plaintext API keys/passwords)
+deal-intelligence-engine/CREDENTIAL_SETUP_QUICK.md
+deal-intelligence-engine/DEPLOYMENT.md
+.claude/settings.local.json
