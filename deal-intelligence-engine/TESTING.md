@@ -1,787 +1,413 @@
-# Clearwater Deal Intelligence Engine - Testing Guide
+# Clearwater Deal Intelligence Engine — Testing Guide
 
-**Phase 1**: Ingestion Pipeline Testing
-**Version**: 1.0
-**Last Updated**: February 26, 2026
+**Phase 1 + 2**: Ingestion Pipeline & Deal Health Agent Testing
+**Version**: 2.0
+**Last Updated**: February 27, 2026
+**Test Deal**: Velentium (velentium.com) — real active deal
 
 ---
 
-## Testing Overview
+## System State Going Into Testing
 
-This guide covers comprehensive testing scenarios for the Gmail → Qdrant ingestion pipeline. All tests assume you've completed the deployment steps in `DEPLOYMENT.md`.
+- Qdrant `deals` collection: **0 points** (clean slate)
+- `ingestion_log`: **0 rows** (clean slate)
+- `attribution_queue`: **0 rows** (clean slate)
+- `deals` table: **25 rows** (real pipeline deals, Velentium NOT seeded — must be created by ingestion)
+- CW-01 workflow: **Active** (bugs fixed 2026-02-27)
+
+### Bugs Fixed Before This Test Run
+1. **Qdrant payload empty** — metadata values (`deal_id`, `company_name`, `doc_type`, etc.) now use `.first().json` and include `date_created` and `message_id`
+2. **Log Ingestion query** — converted from broken mixed mustache+expression syntax to proper JS template literal
+3. **Check Duplicate query** — same fix applied
 
 ---
 
 ## Pre-Test Checklist
 
-Before running tests, verify:
-
 ```bash
-cd deal-intelligence-engine
+# All 5 services running
+docker compose ps
 
-# ✅ All 5 services running
-docker compose ps | grep -E "Up|healthy" | wc -l  # Should be 5
+# Qdrant clean and healthy
+curl -s http://localhost:6333/collections/deals | jq '{points: .result.points_count, status: .result.status}'
+# Expected: { "points": 0, "status": "green" }
 
-# ✅ n8n workflow active
-# Manual check: http://localhost:5678 > Workflows > "Ingestion Pipeline" shows "Active"
+# Postgres clean
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
+  "SELECT COUNT(*) FROM ingestion_log; SELECT COUNT(*) FROM attribution_queue;"
+# Expected: 0, 0
 
-# ✅ Credentials configured
-# Manual check: http://localhost:5678 > Settings > Credentials shows 7 credentials
-
-# ✅ Qdrant collection ready
-curl -s http://localhost:6333/collections/deals | jq '.result.status'  # Should be "green"
+# Velentium NOT in deals table
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
+  "SELECT deal_id FROM deals WHERE company_name ILIKE '%velentium%';"
+# Expected: 0 rows
 ```
 
 ---
 
-## Test Suite
+## Test Suite — Velentium Real Deal Flow
 
-### Test 1: Happy Path - Forwarded Calendar Invite (New Deal)
+The tests below follow the real artifact sequence for a new Velentium deal from first touch.
+Each test builds on the previous one — run them in order.
 
-**Objective**: Verify complete end-to-end flow from Gmail to Qdrant using the true first artifact for a new deal — a forwarded Google Calendar invite. This is what Austin sends to prospects when scheduling the initial discovery call, forwarding a copy to the ingestion inbox at the same time.
+---
 
-**How to send**: Forward (or manually compose) a calendar invite email to the ingestion inbox, mimicking what Gmail sends when you forward a Google Calendar event.
+### Test 1: Discovery Call Calendar Invite (New Deal — First Artifact)
 
-**Test Data**:
+**Objective**: System sees Velentium for the first time via a forwarded calendar invite.
+Must classify as `calendar_invite`, create a new deal record, and store vectors with correct payload.
+
+**What to send**: Forward (or manually compose) an email to the ingestion inbox that looks like
+a forwarded Google Calendar invite for a Velentium discovery call.
+
+**Send to**: `raustinholland+echo@gmail.com`
+
+**Sample email body**:
 ```
-To: raustinholland+echo@gmail.com
-Subject: Fwd: Discovery Call - Acme Hospital + Clearwater Security
-From: Your regular Gmail account (raustinholland@gmail.com)
-Body:
+Subject: Fwd: Discovery Call — Velentium + Clearwater Security
 
 ---------- Forwarded message ---------
-From: Austin Hollins <raustinholland@gmail.com>
-Date: Thu, Feb 26, 2026 at 9:14 AM
-Subject: Discovery Call - Acme Hospital + Clearwater Security
-To: Dr. Sarah Johnson <sjohnson@acmehospital.org>
-Cc: Tom Wilson <twilson@acmehospital.org>
+From: Austin Holland <Austin.Holland@clearwatersecurity.com>
+Date: Thu, Feb 27, 2026 at 9:00 AM
+Subject: Discovery Call — Velentium + Clearwater Security
+To: Brad Brown <brad.brown@velentium.com>
+Cc: Jennifer Lee <jennifer.lee@velentium.com>
 
-Sarah, Tom —
+Brad, Jennifer —
 
-Looking forward to connecting on Thursday. I've sent the calendar invite below.
+Looking forward to connecting Thursday. Calendar invite is below.
 Agenda for our 45-minute call:
 
-1. Overview of Acme Hospital's current security and compliance posture
-2. Walk through your recent HIPAA SRA findings
-3. Discuss Clearwater's engagement approach and methodology
+1. Overview of Velentium's current cybersecurity and compliance posture
+2. Walk through any recent audit or risk assessment findings
+3. Discuss Clearwater's engagement approach
 4. Align on next steps
 
-Please let me know if the time doesn't work and we can find an alternative.
-
 Best,
-Austin Hollins
+Austin Holland
 Account Executive, Clearwater Security & Compliance
-austin.hollins@clearwatercompliance.com | (615) 555-0142
+Austin.Holland@clearwatersecurity.com
 
 --- Calendar Invite Details ---
-Event: Discovery Call - Acme Hospital + Clearwater Security
+Event: Discovery Call — Velentium + Clearwater Security
 Date: Thursday, March 5, 2026
 Time: 10:00 AM – 10:45 AM CT
-Location: Zoom (link: https://zoom.us/j/123456789)
-Organizer: Austin Hollins <raustinholland@gmail.com>
+Location: Zoom
+Organizer: Austin Holland <Austin.Holland@clearwatersecurity.com>
 Guests:
-  - Dr. Sarah Johnson, CIO, Acme Hospital <sjohnson@acmehospital.org> ✓ Accepted
-  - Tom Wilson, CISO, Acme Hospital <twilson@acmehospital.org> ✓ Accepted
-  - Austin Hollins <raustinholland@gmail.com>
+  - Brad Brown, CTO, Velentium <brad.brown@velentium.com> ✓ Accepted
+  - Jennifer Lee, VP Operations, Velentium <jennifer.lee@velentium.com> ✓ Accepted
+  - Austin Holland <Austin.Holland@clearwatersecurity.com>
 
 Description:
-Initial discovery call to explore how Clearwater can support Acme Hospital's
-cybersecurity and HIPAA compliance program. Acme is a 400-bed regional health
-system in Nashville, TN that recently completed an external SRA with 23 open
-findings. Key contacts are Dr. Sarah Johnson (CIO) and Tom Wilson (CISO).
-CFO Jane Doe has approved budget exploration for 2026.
-
-Test ID: test-001-happy-path-2026-02-26
+Initial discovery call to explore how Clearwater can support Velentium's
+cybersecurity and compliance program.
 ```
 
 **Steps**:
-1. Send email to ingestion inbox
-2. Wait up to 2 minutes (Gmail Trigger polls every 1 minute)
-3. Navigate to n8n > Executions
-4. Click latest execution
+1. Send to `raustinholland+echo@gmail.com`
+2. Wait up to 2 minutes (trigger polls every 1 min)
+3. Open n8n > Executions — click the new execution
 
 **Expected Results**:
-- ✅ Execution status: Success (all nodes green)
-- ✅ Gmail Trigger: Captured email with correct subject
-- ✅ AI Classify node output:
+- All nodes green
+- AI Classify output:
   ```json
-  {
-    "company_name": "Acme Hospital",
-    "confidence": "high",
-    "confidence_score": 0.90+,
-    "doc_type": "calendar_invite"
-  }
+  { "company_name": "Velentium", "confidence": "high", "doc_type": "calendar_invite" }
   ```
-- ✅ Deduplication Check: Empty result (new email, no prior `message_id`)
-- ✅ New deal created: `deal_id` = `cw_acmehospital_2026` inserted to `deals` table
-- ✅ Contextual Enrichment: Chunk(s) prepended with `[DEAL CONTEXT]` header
-- ✅ OpenAI Embeddings: Vectors generated successfully
-- ✅ Qdrant Insert: Success
-- ✅ Postgres Log: 1 row in `ingestion_log`
-
-**Validation Queries**:
-```bash
-# Check ingestion_log
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT message_id, deal_id, doc_type, chunk_count, sender_email \
-   FROM ingestion_log \
-   WHERE subject LIKE '%Acme Hospital%' \
-   ORDER BY ingested_at DESC LIMIT 1;"
-
-# Expected: 1 row, doc_type = 'calendar_invite', chunk_count >= 1
-
-# Check new deal record was created
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, company_name, sender_domains, is_active \
-   FROM deals WHERE company_name LIKE '%Acme%';"
-
-# Expected: 1 row with deal_id = "cw_acmehospital_2026", is_active = true
-
-# Check Qdrant vectors
-curl -X POST http://localhost:6333/collections/deals/points/scroll \
-  -H "Content-Type: application/json" \
-  -d '{"limit": 10, "with_payload": true, "with_vector": false, "filter": {"must": [{"key": "company_name", "match": {"value": "Acme Hospital"}}]}}' \
-  | jq '.result.points | length'
-
-# Inspect a chunk payload to verify contextual enrichment and doc_type
-curl -X POST http://localhost:6333/collections/deals/points/scroll \
-  -H "Content-Type: application/json" \
-  -d '{"limit": 1, "with_payload": true, "with_vector": false, "filter": {"must": [{"key": "company_name", "match": {"value": "Acme Hospital"}}]}}' \
-  | jq '.result.points[0].payload'
-
-# Expected payload fields: deal_id, company_name, doc_type="calendar_invite",
-# sender_domain, chunk_index, date_created, attribution_confidence
-```
-
-**Pass Criteria**:
-- All nodes executed successfully
-- New deal row created in `deals` table (first artifact = new deal)
-- Vectors queryable in Qdrant
-- `doc_type` correctly identified as `calendar_invite`
-
----
-
-### Test 2a: Happy Path - Follow-up Call Transcript (Existing Deal)
-
-**Objective**: Verify that a call transcript sent after the calendar invite correctly associates with the existing deal rather than creating a duplicate deal record. Tests the existing-deal lookup path and multi-chunk splitting.
-
-**Prerequisite**: Test 1 must have passed (Acme Hospital deal exists in `deals` table).
-
-**How to send**: Email the transcript as a `.txt` attachment OR paste it directly in the email body.
-
-**Test Data**:
-```
-To: raustinholland+echo@gmail.com
-Subject: Call Transcript - Acme Hospital Discovery Call 2026-03-05
-From: Your regular Gmail account
-Body (or attach as acme-hospital-discovery-call.txt):
-
-CALL TRANSCRIPT
-Date: March 5, 2026
-Duration: 47 minutes
-Participants:
-  - Austin Hollins, Account Executive, Clearwater Security & Compliance
-  - Dr. Sarah Johnson, Chief Information Officer, Acme Hospital
-  - Tom Wilson, CISO, Acme Hospital
-
----
-
-Austin: Sarah, Tom — thanks for making time today. I know you're both busy.
-Before we dive in, can you give me a quick picture of Acme Hospital's current
-situation from a security and compliance standpoint?
-
-Sarah: Sure. So Acme is a 400-bed regional health system here in Nashville.
-We've been growing pretty fast — we acquired two smaller clinics in 2024 —
-and honestly our security program hasn't kept up. We had an external HIPAA
-security risk assessment done last fall and the results were not great.
-We came out with 23 open findings, several of them high severity.
-
-Austin: That's a significant number. What was the reaction from leadership
-when those results came back?
-
-Sarah: Our CFO, Jane Doe, was alarmed. She brought it straight to the board.
-We've had a couple of incidents in the past 18 months — nothing public, but
-enough to make everyone nervous. Jane has made this a 2026 priority and
-she's allocated budget. We're looking at somewhere in the $150,000 to
-$200,000 range depending on scope.
-
-Austin: And Tom, from your side — what are the biggest gaps you're seeing
-day to day?
-
-Tom: Honestly, it's a few things. One is we don't have a mature third-party
-risk management program. We've got 60-plus vendors with access to PHI and
-we're basically doing nothing to vet them. Two is our incident response plan
-hasn't been updated since 2021 and it's never been tested. And three —
-and this is the one that keeps me up at night — our security awareness
-training is basically a checkbox exercise. People are still clicking phishing
-links in our simulations.
-
-Austin: Those are all addressable. Clearwater has done a lot of work in
-exactly these areas. Can I ask — how did you hear about us?
-
-Sarah: A colleague of mine, the CIO at St. Thomas Health, recommended you.
-She said you did a full SRA for them last year and it was one of the
-most practical, actionable assessments she'd ever seen. That's what we
-want — something we can actually execute on, not a 200-page report that
-sits on a shelf.
-
-Austin: That's exactly how we approach it. Let me ask about your timeline.
-Jane has flagged this as a 2026 priority — is there a specific deadline
-driving that? Board meeting, renewal cycle, anything like that?
-
-Sarah: We have a board presentation in June where Jane wants to show
-meaningful progress. And we have a cyber insurance renewal in August —
-our broker has told us we need to show significant improvement or we're
-looking at a 30% premium increase. So the pressure is real.
-
-Austin: Understood. That gives us a clear window. Tom, in terms of internal
-resources — if we ran a full Security Risk Assessment and a third-party
-risk program build-out, what would your team be able to contribute?
-
-Tom: We have two security analysts I can dedicate part-time. And I can
-personally commit probably 8 to 10 hours a week during the engagement.
-We've tried to do some of this ourselves but we just don't have the
-specialized expertise.
-
-Austin: That's actually a good setup — our model works best when we have
-a real internal counterpart, not just a handoff. One thing I want to
-understand better — when it comes to the final decision on a contract
-like this, who's in the room? Is it you, Sarah, Jane, or all three?
-
-Sarah: Jane makes the final call on anything above $100K. But she won't
-move without Tom's and my recommendation. So if Tom and I are aligned,
-Jane typically follows. She trusts our judgment on the technical side.
-
-Austin: Got it. So the real audience for an approach document or proposal
-would be the two of you first, and then you'd present to Jane. Is that
-right?
-
-Sarah: Exactly. And I'll be honest — Jane is very numbers-oriented. If
-we come to her with a clear ROI story — cost of a breach versus cost of
-the engagement, potential fine exposure — that will land well with her.
-
-Austin: We can absolutely build that case. We have benchmarking data from
-healthcare systems your size. The average cost of a HIPAA breach for a
-hospital like Acme is north of $2 million when you factor in OCR fines,
-remediation, and reputational damage. Framing your $180K investment against
-that risk profile is a strong story.
-
-Tom: That's exactly the kind of language Jane responds to.
-
-Austin: Let me propose next steps. I'd like to put together a brief
-Approach Document that outlines what a Clearwater SRA engagement looks
-like for Acme specifically — scope, methodology, timeline, and a rough
-investment range. I'd target getting that to you by March 12th. Does that
-work?
-
-Sarah: That works. Can you include something on the third-party risk
-program? That's Tom's biggest pain point and if we can address both in
-one engagement, it's a much easier sell.
-
-Austin: Absolutely. I'll scope it as a combined SRA plus TPRM program
-build. One more question — do you have any other vendors you're evaluating
-for this, or are you talking to Clearwater exclusively right now?
-
-Sarah: We had a conversation with one other firm last month but honestly
-they weren't a fit — too enterprise-focused, not enough healthcare expertise.
-You're the only active conversation at this point.
-
-Austin: Good to know. I'll get that Approach Document to you by March 12th.
-Tom, Sarah — really appreciate your time today. This sounds like a great fit.
-
-Sarah: Thanks Austin. Looking forward to seeing what you put together.
-
-Tom: Same here. Talk soon.
-
----
-END TRANSCRIPT
-
-Test ID: test-002a-transcript-2026-03-05
-```
-
-**Expected Results**:
-- ✅ AI Classify: `doc_type = "call_transcript"`, company = "Acme Hospital", confidence = high
-- ✅ Deal lookup finds existing `cw_acmehospital_2026` — NO new row created in `deals`
-- ✅ Text split into 4-6 chunks
-- ✅ All chunks stored in Qdrant under `deal_id = cw_acmehospital_2026`
-- ✅ `ingestion_log` now has 2 rows for Acme Hospital (invite + transcript)
-
-**Validation Queries**:
-```bash
-# Confirm still only 1 deal record (no duplicate)
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM deals WHERE company_name LIKE '%Acme%';"
-# Expected: 1
-
-# Confirm 2 ingestion_log entries now
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT doc_type, chunk_count, ingested_at FROM ingestion_log \
-   WHERE deal_id = 'cw_acmehospital_2026' ORDER BY ingested_at;"
-# Expected: 2 rows — calendar_invite then call_transcript
-
-# Confirm Qdrant now has vectors from both artifacts
-curl -X POST http://localhost:6333/collections/deals/points/scroll \
-  -H "Content-Type: application/json" \
-  -d '{"limit": 20, "with_payload": true, "with_vector": false, "filter": {"must": [{"key": "deal_id", "match": {"value": "cw_acmehospital_2026"}}]}}' \
-  | jq '.result.points | length'
-# Expected: 5-7 total vectors (1 from invite + 4-6 from transcript)
-```
-
----
-
-### Test 2b: Deduplication - Duplicate Email Prevention
-
-**Objective**: Verify the same email sent twice only processes once
-
-**Steps**:
-1. Forward the Test 1 calendar invite again (exact same content) to ingestion inbox
-2. Wait 5 minutes
-3. Check n8n Executions
-
-**Expected Results**:
-- ✅ New execution appears
-- ✅ Deduplication Check node returns existing `message_id`
-- ✅ Workflow terminates early (nodes after dedup check are NOT executed)
-- ✅ Qdrant Insert node: NOT executed (grayed out)
-- ✅ Postgres Log node: NOT executed
+- New deal row created in `deals` table (`deal_id = cw_velentium_2026`)
+- 1 row in `ingestion_log`
+- Qdrant vectors written with correct payload
 
 **Validation**:
 ```bash
-# Count entries for same subject
+# Check new deal record
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) as entry_count \
-   FROM ingestion_log \
-   WHERE subject LIKE '%Acme Hospital Security Assessment%'"
+  "SELECT deal_id, company_name, sender_domains FROM deals WHERE company_name ILIKE '%velentium%';"
+# Expected: 1 row, deal_id = cw_velentium_2026
 
-# Expected: Still 1 (not 2)
-
-# Verify same message_id
+# Check ingestion log
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT message_id, COUNT(*) as count \
-   FROM ingestion_log \
-   WHERE subject LIKE '%Acme Hospital%' \
-   GROUP BY message_id \
-   HAVING COUNT(*) > 1"
+  "SELECT message_id, deal_id, doc_type, chunk_count FROM ingestion_log ORDER BY ingested_at DESC LIMIT 1;"
+# Expected: 1 row, doc_type = calendar_invite, chunk_count >= 1
 
-# Expected: Empty result (no duplicates)
+# Check Qdrant payload — THIS is the key fix validation
+curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 5, "with_payload": true, "with_vector": false}' \
+  | jq '.result.points[0].payload'
+# Expected: { deal_id: "cw_velentium_2026", company_name: "Velentium", doc_type: "calendar_invite", ... }
+# NOT: null or empty {}
 ```
 
 **Pass Criteria**:
-- Second execution terminates at dedup check
-- No duplicate entries in `ingestion_log`
-- No duplicate vectors in Qdrant
+- Qdrant payload fields populated (not null/empty) — this is the primary fix being validated
+- New deal row created in `deals` table
+- `ingestion_log` has 1 row with correct `deal_id`
 
 ---
 
-### Test 3: Low-Confidence Attribution - Human Confirmation Queue
+### Test 2: Deduplication — Same Invite Forwarded Again
 
-**Objective**: Verify ambiguous emails route to attribution queue for human review
-
-**Test Data**:
-```
-To: raustinholland+echo@gmail.com
-Subject: Quick question
-From: personal-email@example.com (NOT a known sender domain)
-Body:
-Hi,
-
-I have a question about your compliance software offerings.
-
-Can you send me more information?
-
-Thanks
-```
+**Objective**: Forwarding the same calendar invite a second time produces no new records.
 
 **Steps**:
-1. Send email
-2. Wait 5 minutes
+1. Forward the exact same email from Test 1 again
+2. Wait 2 minutes
 3. Check n8n execution
 
 **Expected Results**:
-- ✅ Execution status: Success
-- ✅ AI Classify node output:
-  ```json
-  {
-    "company_name": "Unknown",
-    "confidence": "low",
-    "confidence_score": 0.3,
-    "doc_type": "email"
-  }
-  ```
-- ✅ Workflow routes to "Queue for Confirmation" branch
-- ✅ Postgres: INSERT to `attribution_queue` table
-- ✅ Qdrant Insert: NOT executed (low confidence = no auto-processing)
+- New execution fires
+- `Postgres: Check Duplicate` finds existing `message_id`
+- `Is New Email?` routes to the false branch — all downstream nodes skipped
+- No new rows in `ingestion_log`
+- No new vectors in Qdrant
 
 **Validation**:
 ```bash
-# Check attribution queue
+# Still only 1 ingestion_log row
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT message_id, subject, ai_guess_company, ai_confidence, resolution \
-   FROM attribution_queue \
-   WHERE resolution = 'pending' \
-   ORDER BY queued_at DESC LIMIT 5"
+  "SELECT COUNT(*) FROM ingestion_log WHERE deal_id = 'cw_velentium_2026';"
+# Expected: 1
 
-# Expected: Entry with subject "Quick question", resolution = "pending"
-
-# Verify NOT in ingestion_log
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM ingestion_log WHERE subject = 'Quick question'"
-
-# Expected: 0 (not processed until human confirms)
+# Still same vector count as after Test 1
+curl -s http://localhost:6333/collections/deals | jq '.result.points_count'
 ```
 
-**Pass Criteria**:
-- Email queued in `attribution_queue` with `resolution='pending'`
-- NOT processed to Qdrant or `ingestion_log`
-- Workflow completes successfully without errors
+**Pass Criteria**: Zero duplicate records after second forward.
 
 ---
 
-### Test 4: Medium-Confidence Attribution - Auto-Assign with Context
+### Test 3: Discovery Call Transcript (Existing Deal, Multi-Chunk)
 
-**Objective**: Verify medium-confidence emails auto-assign based on content analysis
+**Objective**: Call transcript for Velentium associates with the existing deal (no new deal row),
+splits into multiple chunks, all stored with correct payload.
 
-**Test Data**:
+**Prerequisite**: Test 1 passed. `cw_velentium_2026` exists in `deals`.
+
+**Send to**: `raustinholland+echo@gmail.com`
+
+**Sample email body** (or attach as `velentium-discovery-call.txt`):
 ```
-To: raustinholland+echo@gmail.com
-Subject: Follow-up discussion
-From: unknown-sender@hospitaldomain.org
-Body:
-Austin,
+Subject: Call Transcript — Velentium Discovery Call 2026-03-05
 
-Following up on our conversation about the cybersecurity assessment for St. Mary's Regional Hospital.
-
-Our team reviewed the proposal and we'd like to schedule a call next week to discuss budget and timeline.
-
-Looking forward to your response.
-
-Best,
-Michael Chen
-IT Director
-```
-
-**Expected Results**:
-- ✅ AI Classify: company_name = "St. Mary's Regional Hospital", confidence = "medium" (0.5-0.8)
-- ✅ Auto-assigned to deal based on company name match
-- ✅ Processed to Qdrant and `ingestion_log`
-
-**Validation**:
-```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, company_name FROM deals WHERE company_name LIKE '%Mary%'"
-```
-
-**Pass Criteria**:
-- Medium confidence triggers auto-assignment
-- Email processed normally (not queued)
+CALL TRANSCRIPT
+Date: March 5, 2026
+Duration: 45 minutes
+Participants:
+  - Austin Holland, Account Executive, Clearwater Security & Compliance
+  - Brad Brown, CTO, Velentium
+  - Jennifer Lee, VP Operations, Velentium
 
 ---
 
-### Test 5: Email with PDF Attachment
+Austin: Brad, Jennifer — thanks for making time today. Can you give me a picture
+of where Velentium stands from a cybersecurity and compliance standpoint?
 
-**Objective**: Verify PDF attachment text extraction and vectorization
+Brad: Sure. So we're a medical device engineering firm — we build life-critical
+embedded systems for clients in the MedTech space. Most of our clients are subject
+to FDA 21 CFR Part 11, some have IEC 62443 requirements, and we're increasingly
+seeing HIPAA come into play when our devices touch patient data. Our challenge is
+that our compliance posture hasn't kept pace with how fast we've grown. We tripled
+headcount in the last two years and our security program is still sized for where
+we were three years ago.
 
-**Test Data**:
-- Create a 2-page PDF with sample deal content (use Google Docs > Download as PDF)
-- Email to ingestion inbox with PDF attached
+Austin: That's a significant gap. Has anything specific forced the issue recently?
 
-**Expected Results**:
-- ✅ Gmail node: Attachment detected
-- ✅ Extract from File node: PDF text extracted
-- ✅ Postgres `ingestion_log`: `attachment_count = 1`
-- ✅ Chunk count includes PDF content
-- ✅ Qdrant vectors include PDF text
+Brad: Yes — we just went through a SOC 2 Type II audit and it surfaced gaps in our
+access control and incident response processes. We passed, but barely. Our lead
+auditor told us we need to remediate before the next cycle or we're at risk of a
+qualified opinion. That would be a serious problem for our enterprise clients.
 
-**Validation**:
-```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT attachment_count, chunk_count FROM ingestion_log ORDER BY ingested_at DESC LIMIT 1"
+Austin: How did leadership react to that?
 
-# Expected: attachment_count = 1, chunk_count > 5 (depending on PDF size)
-```
+Jennifer: Our CEO flagged it immediately. We have a board presentation in Q2 and
+he wants to show the board that we've got a credible remediation plan in place.
+We also have three enterprise contracts up for renewal in the fall where security
+posture is an explicit evaluation criterion. So the business consequences of not
+fixing this are very real.
 
-**Note**: If PDF extraction fails, this is documented as a Phase 1.5 enhancement. Workflow should handle gracefully with warning log.
+Austin: And Jennifer, from your side — what are the biggest operational pain points?
+
+Jennifer: Vendor risk. We work with about 40 subcontractors who have varying levels
+of access to our development environment and client data. We have basically no
+formal third-party risk management process. It's all informal. And our incident
+response plan hasn't been tested in two years.
+
+Austin: Those are all solvable. Let me ask about the decision-making process. When
+you're ready to move forward on an engagement like this, who's in the room?
+
+Brad: Our CEO Marcus Chen makes the final call on anything above $50K. But he won't
+move without Jennifer's and my recommendation. If we're aligned, Marcus typically
+follows. He trusts our judgment on the technical and operational side.
+
+Jennifer: And I'll be honest — Marcus is very ROI-oriented. He's going to want to
+see the risk quantified in business terms, not just technical language.
+
+Austin: We can build that case. The cost of a breach for a company in your position —
+regulatory exposure, client notification, potential loss of enterprise contracts —
+easily exceeds $1M. Framing a $150-200K engagement against that risk profile is
+a compelling story. Let me propose next steps: I'd like to put together an Approach
+Document that outlines a Clearwater SRA and third-party risk program build-out
+specifically for Velentium. I can target that for March 12th. Does that work?
+
+Brad: That works. Can you include something on the SOC 2 remediation roadmap?
+That's our most time-sensitive item.
+
+Austin: Absolutely. I'll scope it as a combined SRA, TPRM, and SOC 2 remediation
+program. One more question — are you talking to any other vendors right now?
+
+Brad: We had one conversation with a firm that was too enterprise-focused for our
+stage. You're the active conversation.
+
+Austin: Good to know. I'll get the Approach Document to you by March 12th.
 
 ---
-
-### Test 6: Long Email (Chunking Validation)
-
-**Objective**: Verify proper text chunking with 500-token segments and 50-token overlap
-
-**Test Data**:
-Send email with ~2000-word body (approximately 3000 tokens):
-```
-Subject: Comprehensive Security Assessment Report - Acme Hospital
-
-[Paste 2000-word document about HIPAA compliance, security vulnerabilities, remediation plan]
+END TRANSCRIPT
 ```
 
 **Expected Results**:
-- ✅ Text split into ~6-7 chunks (500 tokens each, 50 overlap)
-- ✅ Contextual enrichment applied to each chunk
-- ✅ Qdrant receives 6-7 separate vectors for this email
-- ✅ Postgres `ingestion_log`: `chunk_count = 6` or 7
+- AI Classify: `doc_type = "call_transcript"`, company = "Velentium", confidence = high
+- Deal lookup finds `cw_velentium_2026` — NO new row in `deals`
+- Text splits into 4-7 chunks
+- All chunks in Qdrant under `deal_id = cw_velentium_2026`
+- `ingestion_log` now has 2 rows for Velentium
 
 **Validation**:
 ```bash
-# Check chunk count
+# Still only 1 deal record (no duplicate)
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT chunk_count FROM ingestion_log ORDER BY ingested_at DESC LIMIT 1"
+  "SELECT COUNT(*) FROM deals WHERE company_name ILIKE '%velentium%';"
+# Expected: 1
 
-# Check Qdrant vectors for this email (by filtering on recent timestamp)
-curl -X POST http://localhost:6333/collections/deals/points/scroll \
+# Now 2 ingestion_log entries
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
+  "SELECT doc_type, chunk_count, ingested_at FROM ingestion_log \
+   WHERE deal_id = 'cw_velentium_2026' ORDER BY ingested_at;"
+# Expected: 2 rows — calendar_invite, call_transcript
+
+# Qdrant vector count increased (transcript = multiple chunks)
+curl -s http://localhost:6333/collections/deals | jq '.result.points_count'
+# Expected: more than after Test 1
+
+# Verify all vectors have deal_id payload
+curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
   -H "Content-Type: application/json" \
-  -d '{"limit": 10, "with_payload": true, "with_vector": false}' | jq '.result.points | map(.payload.chunk_index)'
+  -d '{"limit": 20, "with_payload": true, "with_vector": false}' \
+  | jq '[.result.points[] | {id: .id, deal_id: .payload.deal_id, doc_type: .payload.doc_type}]'
+# Expected: all entries show deal_id = "cw_velentium_2026", none null
 ```
 
 **Pass Criteria**:
-- Proper segmentation (not one giant chunk)
-- Chunk indices sequential (0, 1, 2, ...)
-- Overlap preserved between chunks
+- Only 1 deal row in `deals`
+- Multiple chunks in Qdrant, all with correct payload
+- `ingestion_log` has 2 rows
 
 ---
 
-### Test 7: Unicode and Special Characters
+### Test 4: Low-Confidence Attribution — Unknown Sender
 
-**Objective**: Verify handling of non-ASCII characters (emojis, foreign languages)
+**Objective**: An ambiguous email from an unknown sender goes to `attribution_queue`, not Qdrant.
 
-**Test Data**:
+**Send to**: `raustinholland+echo@gmail.com`
+
+**Sample**:
 ```
-Subject: Project Update - Zürich Hospital 🏥
-Body:
-Bonjour Austin,
-
-Quick update on the Zürich University Hospital project.
-
-Budget: €250,000
-Timeline: Q2 2026
-Contact: François Müller
-
-Key points:
-✓ Executive sponsor confirmed
-✓ Pain point identified
-✓ Next meeting: März 15th
-
-Looking forward to the próxima reunión! 🎉
-
-Best regards,
-José García
+From: info@unknownclinic.org
+Subject: Question about compliance services
+Body: Hi, we're interested in learning more about your cybersecurity assessment services.
 ```
 
 **Expected Results**:
-- ✅ Email processed without errors
-- ✅ Unicode characters preserved in Qdrant payload
-- ✅ OpenAI embeddings handle non-English text
+- AI Classify: `confidence = "low"`
+- Routes to `Postgres: Queue for Confirmation`
+- Row in `attribution_queue` with `resolution = 'pending'`
+- NOT in `ingestion_log`, NOT in Qdrant
 
 **Validation**:
 ```bash
-# Check if unicode preserved
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT subject FROM ingestion_log ORDER BY ingested_at DESC LIMIT 1"
-
-# Should show: "Project Update - Zürich Hospital 🏥"
+  "SELECT subject, ai_guess_company, ai_confidence, resolution FROM attribution_queue \
+   WHERE resolution = 'pending' ORDER BY queued_at DESC LIMIT 3;"
 ```
 
 ---
 
-### Test 8: Large Email (Memory/Performance Test)
+### Test 5: Phase 2 Trigger — Deal Health Scoring (After Phase 2 Built)
 
-**Objective**: Verify handling of very long emails without memory issues
+**Objective**: After ingesting the discovery call transcript (Test 3), the HTTP trigger fires
+and Workflow 2 scores Velentium's P2V2C2 dimensions from the RAG context.
 
-**Test Data**:
-- Email with 10,000-word body (~15,000 tokens)
-- Should generate ~30 chunks
-
-**Expected Results**:
-- ✅ Workflow completes (may take 30-60 seconds)
-- ✅ No memory errors
-- ✅ ~30 chunks created
-- ✅ All vectors inserted to Qdrant
-
-**Monitoring**:
-```bash
-# Watch n8n logs during processing
-docker logs -f clearwater-n8n
-
-# Check for errors
-docker logs clearwater-n8n | grep -i "error\|memory"
-```
-
-**Pass Criteria**:
-- Completes without errors
-- Processing time < 2 minutes
-- No Docker container restarts
-
----
-
-### Test 9: Gmail API Rate Limit Handling
-
-**Objective**: Verify graceful handling of API rate limits
-
-**Test Steps**:
-1. Send 10 emails rapidly (within 1 minute)
-2. Monitor n8n executions
-3. Check for rate limit errors
+**Prerequisite**: Workflow 2 (CW-02) built and active.
 
 **Expected Results**:
-- First 5-7 emails: Process normally
-- If rate limit hit: Workflow logs error, retries after backoff
-- Eventually all emails process (may take 15-20 minutes)
+- Webhook `POST /webhook/deal-health-trigger` returns 200
+- Workflow 2 runs 15 RAG queries against Velentium namespace
+- Claude Opus scores all 6 P2V2C2 dimensions (expect low scores — early Discover stage)
+- New row inserted to `deal_health` table
+
+**Expected Approximate Scores** (based on transcript content):
+| Dimension | Expected | Reasoning |
+|---|---|---|
+| Pain | 2-3 | Pain articulated (SOC 2, TPRM), not yet validated by ES |
+| Power | 1-2 | Know CEO is DM, but no direct access yet |
+| Vision | 1-2 | Current/future state starting to emerge |
+| Value | 1 | ROI discussed but not agreed |
+| Change | 1-2 | Urgency exists (board, renewals) but no commitment |
+| Control | 1 | No DAP yet |
 
 **Validation**:
 ```bash
-# Check for rate limit errors in logs
-docker logs clearwater-n8n | grep -i "quota\|rate"
-
-# Count processed vs sent
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM ingestion_log WHERE ingested_at > NOW() - INTERVAL '30 minutes'"
+  "SELECT deal_id, pain_score, power_score, vision_score, value_score, change_score, \
+   control_score, (pain_score+power_score+vision_score+value_score+change_score+control_score) AS total, \
+   scored_at FROM deal_health WHERE deal_id = 'cw_velentium_2026' ORDER BY scored_at DESC LIMIT 1;"
 ```
-
----
-
-### Test 10: Service Restart Recovery
-
-**Objective**: Verify system recovers gracefully from service restarts
-
-**Steps**:
-1. Send test email
-2. Immediately restart n8n:
-   ```bash
-   docker compose restart n8n
-   ```
-3. Wait for n8n to recover (30 seconds)
-4. Check if email eventually processes
-
-**Expected Results**:
-- ✅ n8n restarts successfully
-- ✅ Workflow remains active after restart
-- ✅ Gmail Trigger resumes polling
-- ✅ Email processes on next poll (within 5 minutes)
-
-**Pass Criteria**:
-- No data loss
-- Workflow reactivates automatically
-- Email processes successfully
 
 ---
 
 ## Validation Command Cheat Sheet
 
-### Quick Health Check
 ```bash
-# All services running
-docker compose ps
+# Quick health check
+curl -s http://localhost:6333/collections/deals | jq '{points: .result.points_count, status: .result.status}'
 
-# Recent ingestion activity
+# All ingestion log entries
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) as recent_ingestions FROM ingestion_log WHERE ingested_at > NOW() - INTERVAL '1 hour'"
+  "SELECT id, deal_id, doc_type, chunk_count, sender_email, ingested_at FROM ingestion_log ORDER BY ingested_at DESC;"
 
-# Qdrant vector count
-curl -s http://localhost:6333/collections/deals | jq '.result.points_count'
-
-# n8n workflow executions (requires API key from n8n UI)
-# Manual check: http://localhost:5678/executions
-```
-
-### Detailed Ingestion Log Query
-```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT
-    id,
-    subject,
-    deal_id,
-    doc_type,
-    chunk_count,
-    attachment_count,
-    sender_email,
-    ingested_at
-   FROM ingestion_log
-   ORDER BY ingested_at DESC
-   LIMIT 10"
-```
-
-### Qdrant Vector Query with Filters
-```bash
-# All vectors for specific deal
-curl -X POST http://localhost:6333/collections/deals/points/scroll \
+# All Qdrant payloads (verify no nulls)
+curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
   -H "Content-Type: application/json" \
-  -d '{
-    "limit": 10,
-    "with_payload": true,
-    "with_vector": false,
-    "filter": {
-      "must": [
-        {"key": "deal_id", "match": {"value": "cw_acmehospital_2026"}}
-      ]
-    }
-  }' | jq '.result.points'
+  -d '{"limit": 50, "with_payload": true, "with_vector": false}' \
+  | jq '[.result.points[] | {id: .id, deal_id: .payload.deal_id, doc_type: .payload.doc_type, company: .payload.company_name}]'
+
+# All deals table
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
+  "SELECT deal_id, company_name, deal_stage FROM deals ORDER BY created_at DESC LIMIT 5;"
+
+# Attribution queue
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
+  "SELECT subject, ai_guess_company, resolution FROM attribution_queue ORDER BY queued_at DESC LIMIT 5;"
 ```
 
 ---
 
 ## Test Execution Record
 
-Use this table to track test execution:
-
 | Test # | Test Name | Date | Status | Notes |
 |--------|-----------|------|--------|-------|
-| 1 | Calendar Invite - New Deal | | ⬜ Pass / ❌ Fail | |
-| 2a | Call Transcript - Existing Deal | | ⬜ Pass / ❌ Fail | |
-| 2b | Deduplication | | ⬜ Pass / ❌ Fail | |
-| 3 | Low-Confidence Attribution | | ⬜ Pass / ❌ Fail | |
-| 4 | Medium-Confidence Attribution | | ⬜ Pass / ❌ Fail | |
-| 5 | PDF Attachment | | ⬜ Pass / ❌ Fail | |
-| 6 | Long Email Chunking | | ⬜ Pass / ❌ Fail | |
-| 7 | Unicode/Special Chars | | ⬜ Pass / ❌ Fail | |
-| 8 | Large Email | | ⬜ Pass / ❌ Fail | |
-| 9 | Rate Limit Handling | | ⬜ Pass / ❌ Fail | |
-| 10 | Service Restart | | ⬜ Pass / ❌ Fail | |
+| 1 | Calendar Invite — Velentium (New Deal) | | ⬜ | Qdrant payload fix validation |
+| 2 | Deduplication — Same Invite Again | | ⬜ | |
+| 3 | Discovery Call Transcript — Existing Deal | | ⬜ | Multi-chunk, no new deal row |
+| 4 | Low-Confidence Attribution Queue | | ⬜ | |
+| 5 | Phase 2 Health Scoring (after CW-02 built) | | ⬜ | |
 
 ---
 
-## Known Issues and Limitations (Phase 1)
+## Known Issues Going Into Testing
 
-1. **PDF Extraction**: May require additional n8n nodes (pdf-parse library) - documented as Phase 1.5 enhancement
-2. **5-Minute Poll Delay**: Gmail Trigger polls every 5 minutes - not real-time
-3. **No Thread Reconstruction**: Each email processed independently - thread context not automatically linked
-4. **20MB Attachment Limit**: Files >20MB skipped with warning (n8n binary data limit)
-5. **English-Only Optimized**: Text chunking assumes English - multilingual support untested
-
----
-
-## Performance Benchmarks (Expected)
-
-| Metric | Expected Value | Notes |
-|--------|----------------|-------|
-| Email processing time | 10-30 seconds | Depends on email size |
-| Embedding time (per chunk) | 1-2 seconds | OpenAI API latency |
-| Qdrant insertion | < 1 second | Local Docker, minimal latency |
-| Total end-to-end latency | 5-10 minutes | Includes Gmail poll interval |
-| Throughput | ~10-20 emails/day | Current volume (MVP) |
-| Max email size | 10,000 words | ~30 chunks, ~60 seconds total |
-
----
-
-## Acceptance Criteria Summary
-
-Phase 1 is **COMPLETE** when:
-- ✅ All 10 test scenarios pass
-- ✅ No errors in n8n execution logs for standard emails
-- ✅ Deduplication working (zero duplicate entries)
-- ✅ Low-confidence routing to attribution_queue functional
-- ✅ Qdrant vectors queryable and returning correct results
-- ✅ Postgres schema populated with test data
-- ✅ Service restarts don't cause data loss
-
----
-
-## Next Steps After Testing
-
-Once all tests pass:
-1. **Proceed to Phase 2**: Deploy Deal Health Scoring Agent (workflow-02-deal-health.json)
-2. **Monitor production usage**: Watch for edge cases not covered in testing
-3. **Tune confidence thresholds**: Adjust based on real attribution accuracy
-4. **Optimize performance**: If processing >50 emails/day, consider reducing poll interval to 1 minute
-
-**Estimated Phase 1 Testing Time**: 2-3 hours for full test suite execution
+1. **`calendar_invite` doc_type routing** — The doc_type router sends `calendar_invite` to `Code: Extract Email Body` (email branch). This is correct behavior — calendar invites arrive as email bodies. No fix needed.
+2. **HTTP Trigger Health Agent** — Returns error until Workflow 2 is built. `continueOnFail: true` is set, so the workflow completes successfully regardless.
+3. **Postgres port** — External connections use port `5433` (not 5432). Docker `exec` commands connect internally and work normally.
+4. **Velentium not pre-seeded** — By design. The system must create the deal record from scratch based on the calendar invite content.
