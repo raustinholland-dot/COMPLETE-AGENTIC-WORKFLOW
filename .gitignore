@@ -439,5 +439,8 @@ AGENTS.md
 # n8n-as-code shadow directory (created when extension misconfigures syncFolder as absolute path)
 /Users/
 
+# Claude Code internal plan artifacts
+.agents/
+
 # VS Code workspace settings (personal)
 .vscode/settings.json
