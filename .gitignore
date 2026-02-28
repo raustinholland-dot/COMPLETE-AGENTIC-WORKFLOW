@@ -403,6 +403,7 @@ FodyWeavers.xsd
 !.vscode/launch.json
 !.vscode/extensions.json
 !.vscode/*.code-snippets
+.vscode/n8n.code-snippets
 
 # Local History for Visual Studio Code
 .history/
@@ -434,6 +435,9 @@ AGENTS.md
 # Local data exports and reports
 *.csv
 /workflows/
+
+# n8n-as-code shadow directory (created when extension misconfigures syncFolder as absolute path)
+/Users/
 
 # VS Code workspace settings (personal)
 .vscode/settings.json
