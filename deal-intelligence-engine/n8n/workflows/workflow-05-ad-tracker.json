@@ -1,0 +1,277 @@
+{
+  "id": "Ws9huL0qwcW6NR4e",
+  "name": "CW-05: AD Tracker Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ad-tracker-trigger",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "cw05-0001-0000-0000-000000000001",
+      "name": "Webhook: AD Tracker Trigger",
+      "webhookId": "cw05-0001-0000-0000-000000000001",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract deal_id from webhook body\nconst body = $input.first().json.body || $input.first().json;\nconst deal_id = body.deal_id;\n\nif (!deal_id) throw new Error('Missing required field: deal_id');\n\nreturn [{ json: { deal_id } }];\n"
+      },
+      "id": "cw05-0002-0000-0000-000000000002",
+      "name": "Code: Extract Deal ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT dh.id, dh.deal_id, dh.deal_stage, dh.scored_at, dh.next_step, dh.next_step_date,\n  dh.inferred_workstreams, dh.delivery_staff_on_call,\n  dh.key_objectives_strategic, dh.key_objectives_security, dh.key_objectives_compliance,\n  dh.champion_name, dh.pes_name, dh.executive_sponsor_name,\n  dh.p2v2c2_total, dh.critical_activity_stage,\n  d.company_name, d.hold_until, d.hold_reason\nFROM deal_health dh\nJOIN deals d ON d.deal_id = dh.deal_id\nWHERE dh.deal_id = '{{ $json.deal_id }}'\nORDER BY dh.scored_at DESC\nLIMIT 1",
+        "options": {}
+      },
+      "id": "cw05-0003-0000-0000-000000000003",
+      "name": "Postgres: Get Latest Deal Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT\n  ad.id AS ad_id, ad.pricing_requested, ad.pricing_requested_at, ad.pricing_contact,\n  ad.dc_principal_name, ad.dc_consultant_name, ad.dc_assigned_at, ad.ad_version, ad.ad_presented_at,\n  -- Count pending drafts by type to avoid re-queuing\n  COUNT(CASE WHEN ol.output_type = 'pricing_request' AND ol.status = 'draft' THEN 1 END) AS draft_pricing_request,\n  COUNT(CASE WHEN ol.output_type = 'internal_team_update' AND ol.status = 'draft' THEN 1 END) AS draft_internal_update,\n  COUNT(CASE WHEN ol.output_type = 'pre_call_planner' AND ol.status = 'draft' THEN 1 END) AS draft_pre_call_planner,\n  -- Workstreams\n  COALESCE(\n    JSON_AGG(\n      JSON_BUILD_OBJECT(\n        'service_slug', dw.service_slug,\n        'confidence', dw.confidence,\n        'scoping_status', dw.scoping_status,\n        'pricing_status', dw.pricing_status,\n        'dc_assigned_name', dw.dc_assigned_name\n      )\n    ) FILTER (WHERE dw.id IS NOT NULL),\n    '[]'::json\n  ) AS workstreams\nFROM deals d\nLEFT JOIN approach_doc ad ON ad.deal_id = d.deal_id\nLEFT JOIN deal_workstreams dw ON dw.deal_id = d.deal_id\nLEFT JOIN outputs_log ol ON ol.deal_id = d.deal_id\nWHERE d.deal_id = '{{ $('Code: Extract Deal ID').first().json.deal_id }}'\nGROUP BY ad.id, ad.pricing_requested, ad.pricing_requested_at, ad.pricing_contact,\n  ad.dc_principal_name, ad.dc_consultant_name, ad.dc_assigned_at, ad.ad_version, ad.ad_presented_at",
+        "options": {}
+      },
+      "id": "cw05-0004-0000-0000-000000000004",
+      "name": "Postgres: Get Existing Approach Doc",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Core AD gap assessment logic.\n// Reads Agent 2's freshly written deal_health row and the existing approach_doc state.\n// Produces a list of gap items to queue as drafts in Agent 3.\n\nconst health = $('Postgres: Get Latest Deal Health').first().json;\nconst adRow = $('Postgres: Get Existing Approach Doc').first().json;\nconst deal_id = health.deal_id;\nconst today = new Date();\nconst stage = (health.deal_stage || '').toLowerCase();\n\n// Normalize stage: qualify, prove, negotiate, close\nconst activeStages = ['qualify', 'prove', 'negotiate', 'close'];\nif (!activeStages.includes(stage)) {\n  return [{ json: { gaps: [], skipped_reason: `deal in ${stage || 'discover'} stage — no AD assessment needed` } }];\n}\n\n// Check hold\nif (health.hold_until && new Date(health.hold_until) > today) {\n  return [{ json: { gaps: [], skipped_reason: 'hold_until: ' + health.hold_until } }];\n}\n\n// Parse inferred workstreams from deal_health\n// inferred_workstreams is a JSONB array of service_slug strings\nlet workstreams = [];\ntry {\n  const raw = health.inferred_workstreams;\n  if (Array.isArray(raw)) workstreams = raw;\n  else if (typeof raw === 'string') workstreams = JSON.parse(raw);\n} catch(e) { workstreams = []; }\n\n// Parse workstream rows from approach_doc query\nlet wsRows = [];\ntry {\n  const raw = adRow.workstreams;\n  if (Array.isArray(raw)) wsRows = raw;\n  else if (typeof raw === 'string') wsRows = JSON.parse(raw);\n} catch(e) { wsRows = []; }\n\nconst draft_counts = {\n  pricing_request: parseInt(adRow.draft_pricing_request || 0),\n  internal_team_update: parseInt(adRow.draft_internal_update || 0),\n  pre_call_planner: parseInt(adRow.draft_pre_call_planner || 0)\n};\n\nconst gaps = [];\n\n// --- Gap 1: Pricing not yet requested for any inferred workstream ---\n// Only queue if: workstreams identified AND pricing not already requested AND no draft pending\nconst pricingAlreadyRequested = adRow.pricing_requested === true;\nconst hasDraftPricingRequest = draft_counts.pricing_request > 0;\n\nif (workstreams.length > 0 && !pricingAlreadyRequested && !hasDraftPricingRequest) {\n  // Steve Akers handles Managed Cloud / Azure workstreams\n  const steveAkersSlugs = ['managed_azure_cloud', 'managed_security_healthcare', 'managed_soc', 'mdr', 'mss'];\n  const needsSteve = workstreams.some(slug => steveAkersSlugs.includes(slug));\n  const pricingContact = needsSteve ? 'steve_akers' : 'carter';\n  const recipientEmail = needsSteve ? 'steve.akers@clearwatersecurity.com' : 'carter.lankford@clearwatersecurity.com';\n  const recipientName = needsSteve ? 'Steve Akers' : 'Carter Lankford';\n\n  gaps.push({\n    deal_id,\n    output_type: 'pricing_request',\n    recipient_email: recipientEmail,\n    recipient_name: recipientName,\n    instructions: `Workstreams identified: ${workstreams.join(', ')}. Company: ${health.company_name}. Deal stage: ${stage}. Generate pricing request draft (format TBD — placeholder only, do not send).`,\n    triggered_by: 'ad_tracker'\n  });\n}\n\n// --- Gap 2: Scoping missing for confirmed workstreams (Prove+ stage only) ---\nif (['prove', 'negotiate', 'close'].includes(stage)) {\n  const unscopedWorkstreams = wsRows.filter(ws =>\n    ws.scoping_status === 'missing' || ws.scoping_status === 'partial'\n  );\n  if (unscopedWorkstreams.length > 0 && draft_counts.internal_team_update === 0) {\n    gaps.push({\n      deal_id,\n      output_type: 'internal_team_update',\n      recipient_email: 'austin.holland@clearwatersecurity.com',\n      recipient_name: 'Austin Holland',\n      instructions: `Scoping incomplete for: ${unscopedWorkstreams.map(w => w.service_slug).join(', ')}. Company: ${health.company_name}. Deal stage: ${stage}. Flag for next call prep — what questions are still outstanding?`,\n      triggered_by: 'ad_tracker'\n    });\n  }\n}\n\n// --- Gap 3: DC not assigned for any workstream (Prove+ stage) ---\nif (['prove', 'negotiate', 'close'].includes(stage)) {\n  const unassigned = wsRows.filter(ws => !ws.dc_assigned_name);\n  // Only flag if there are workstreams and none have a DC yet\n  if (unassigned.length > 0 && wsRows.length > 0 && !adRow.dc_principal_name && draft_counts.internal_team_update === 0) {\n    gaps.push({\n      deal_id,\n      output_type: 'internal_team_update',\n      recipient_email: 'austin.holland@clearwatersecurity.com',\n      recipient_name: 'Austin Holland',\n      instructions: `No Delivery Consultant assigned for: ${unassigned.map(w => w.service_slug).join(', ')}. Company: ${health.company_name}. Deal stage: ${stage}. Check with Delivery team.`,\n      triggered_by: 'ad_tracker'\n    });\n  }\n}\n\n// --- Gap 4: Pre-call planner (upcoming call within 3 days) ---\nif (health.next_step_date) {\n  const nextDate = new Date(health.next_step_date);\n  const daysUntilNext = Math.floor((nextDate - today) / 86400000);\n  const hasPendingPreCall = draft_counts.pre_call_planner > 0;\n\n  if (daysUntilNext >= 0 && daysUntilNext <= 3 && !hasPendingPreCall) {\n    const scopingGaps = wsRows\n      .filter(ws => ws.scoping_status !== 'complete')\n      .map(ws => ws.service_slug);\n    gaps.push({\n      deal_id,\n      output_type: 'pre_call_planner',\n      recipient_email: 'austin.holland@clearwatersecurity.com',\n      recipient_name: 'Austin Holland',\n      instructions: `Upcoming call in ${daysUntilNext} day(s): ${health.next_step_date}. Focus: ${health.next_step || 'advance deal'}. Company: ${health.company_name}.`\n        + (scopingGaps.length > 0 ? ` Scoping still needed for: ${scopingGaps.join(', ')}.` : ''),\n      triggered_by: 'ad_tracker'\n    });\n  }\n}\n\nif (gaps.length === 0) {\n  return [{ json: { gaps: [], skipped_reason: 'no gaps detected', deal_id } }];\n}\n\n// Return one item per gap — fan-out to HTTP: Queue Draft Outputs\nreturn gaps.map(g => ({ json: g }));\n"
+      },
+      "id": "cw05-0005-0000-0000-000000000005",
+      "name": "Code: Assess AD Gaps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-gaps-check",
+              "leftValue": "={{ $json.output_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "cw05-0006-0000-0000-000000000006",
+      "name": "IF: Any Gaps?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/output-request",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ deal_id: $json.deal_id, output_type: $json.output_type, recipient_email: $json.recipient_email, recipient_name: $json.recipient_name, instructions: $json.instructions, requested_by: 'ad_tracker', preview_mode: true, triggered_by: 'ad_tracker' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "cw05-0007-0000-0000-000000000007",
+      "name": "HTTP: Queue Draft Outputs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Upsert approach_doc and deal_workstreams for this deal.\n// Runs after gap assessment (whether or not gaps were found).\n// Gathers all upstream data.\n\nconst dealId = $('Code: Extract Deal ID').first().json.deal_id;\nconst health = $('Postgres: Get Latest Deal Health').first().json;\nconst adRow = $('Postgres: Get Existing Approach Doc').first().json;\n\n// Parse inferred workstreams\nlet workstreams = [];\ntry {\n  const raw = health.inferred_workstreams;\n  if (Array.isArray(raw)) workstreams = raw;\n  else if (typeof raw === 'string') workstreams = JSON.parse(raw);\n} catch(e) { workstreams = []; }\n\nfunction sq(v) {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  return \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\nfunction sb(v) { return v ? 'TRUE' : 'FALSE'; }\n\n// Upsert approach_doc — only set fields we have data for\nconst approachDocSql = `INSERT INTO approach_doc (deal_id, last_updated_at)\nVALUES (${sq(dealId)}, NOW())\nON CONFLICT (deal_id) DO UPDATE SET last_updated_at = NOW()`;\n\n// Upsert deal_workstreams — one row per inferred workstream (confidence='inferred' until confirmed)\nlet workstreamsSql = 'SELECT 1'; // no-op if no workstreams\nif (workstreams.length > 0) {\n  const rows = workstreams.map(slug =>\n    `(${sq(dealId)}, ${sq(slug)}, 'inferred', 'missing', 'not_requested', NOW(), NOW())`\n  ).join(',\\n');\n  workstreamsSql = `INSERT INTO deal_workstreams\n  (deal_id, service_slug, confidence, scoping_status, pricing_status, first_inferred_at, last_updated_at)\nVALUES ${rows}\nON CONFLICT (deal_id, service_slug) DO UPDATE SET last_updated_at = NOW()`;\n}\n\nreturn [{ json: { approach_doc_sql: approachDocSql, workstreams_sql: workstreamsSql, deal_id: dealId } }];\n"
+      },
+      "id": "cw05-0008-0000-0000-000000000008",
+      "name": "Code: Build Upsert SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.approach_doc_sql + '; ' + $json.workstreams_sql }}",
+        "options": {}
+      },
+      "id": "cw05-0009-0000-0000-000000000009",
+      "name": "Postgres: Upsert Approach Doc",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1780, 420],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final logging node — signals AD Tracker pipeline complete\nconst dealId = $('Code: Extract Deal ID').first().json.deal_id;\nreturn [{ json: { status: 'ad_tracker_complete', deal_id: dealId } }];\n"
+      },
+      "id": "cw05-0010-0000-0000-000000000010",
+      "name": "Code: Log Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 420]
+    }
+  ],
+  "connections": {
+    "Webhook: AD Tracker Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Extract Deal ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Extract Deal ID": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Latest Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Latest Deal Health": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Existing Approach Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Existing Approach Doc": {
+      "main": [
+        [
+          {
+            "node": "Code: Assess AD Gaps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Assess AD Gaps": {
+      "main": [
+        [
+          {
+            "node": "IF: Any Gaps?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Any Gaps?": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Queue Draft Outputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: Build Upsert SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Queue Draft Outputs": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Upsert SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Upsert SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Approach Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Approach Doc": {
+      "main": [
+        [
+          {
+            "node": "Code: Log Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null
+}

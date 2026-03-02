@@ -247,6 +247,8 @@ Gmail Trigger (poll 5 min, dedicated inbox)
   → HTTP POST: trigger Workflow 2 for this deal_id
 ```
 
+**New Deal Shell Opportunity:** When a calendar invite arrives from a domain not already in the `deals` table, CW-01 automatically creates a new deal record (`deal_stage = 'discover'`, `is_active = true`). CW-02 then fires, detects that the deal has only `calendar_invite` ingestion records (`IF: Calendar Only?` = true), and inserts a zero-score placeholder `deal_health` row (`trigger_type = 'calendar_only'`). This is correct expected behavior — the deal exists as a shell opportunity and will score naturally as additional artifacts (transcripts, emails, documents) are ingested.
+
 ### Workflow 2: Deal Health Agent
 
 **Triggers:** Webhook from Workflow 1 (after every ingestion) + Nightly schedule (8pm ET, weekdays)

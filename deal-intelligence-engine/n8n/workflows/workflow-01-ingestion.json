@@ -22,7 +22,7 @@
           "downloadAttachments": true
         }
       },
-      "id": "gmail-trigger",
+      "id": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
       "name": "Gmail: Watch Ingestion Inbox",
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1,
@@ -39,17 +39,16 @@
     },
     {
       "parameters": {
-        "operation": "get",
-        "messageId": "={{ $json.id }}",
-        "options": {
-          "downloadAttachments": true,
-          "simplifyOutput": false
-        }
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.id }}?format=full",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
       },
       "id": "gmail-get-message",
       "name": "Gmail: Get Full Message",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [
         460,
         300
@@ -64,7 +63,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=SELECT id FROM ingestion_log WHERE message_id = '{{ $json.id }}' LIMIT 1",
+        "query": "=SELECT id FROM ingestion_log WHERE message_id = '{{ $json.id }}' OR (subject IS NOT NULL AND subject != '' AND LOWER(subject) = '{{ $json.norm_subject.replace(/'/g, \"''\") }}' AND sender_email LIKE '%{{ $json.sender_domain_dedup }}%') LIMIT 1",
         "options": {}
       },
       "id": "check-duplicate",
@@ -136,7 +135,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a deal attribution classifier for Clearwater Security & Compliance. Analyze this email and return ONLY a JSON object (no markdown, no code fences) with these exact fields:\\n{\\n  \\\"company_name\\\": \\\"<company name or Unknown>\\\",\\n  \\\"sender_domain\\\": \\\"<domain from sender email>\\\",\\n  \\\"doc_type\\\": \\\"<email_body|call_transcript|pdf_attachment|pptx_attachment|csv_attachment|other>\\\",\\n  \\\"deal_indicators\\\": [],\\n  \\\"guessed_deal_company\\\": \\\"<company name>\\\",\\n  \\\"confidence\\\": \\\"<high|medium|low>\\\",\\n  \\\"confidence_score\\\": 0.0,\\n  \\\"reasoning\\\": \\\"<one sentence>\\\"\\n}\\n\\nEmail details:\\nFrom: {{ $('Gmail: Get Full Message').item.json.from }}\\nSubject: {{ $('Gmail: Get Full Message').item.json.subject }}\\nBody (first 2000 chars): {{ ($('Gmail: Get Full Message').item.json.text ?? $('Gmail: Get Full Message').item.json.snippet ?? '').slice(0, 2000) }}\"\n    }\n  ]\n}"
+        "body": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a deal attribution classifier for Clearwater Security & Compliance. Analyze this email and return ONLY a JSON object (no markdown, no code fences) with these exact fields:\\n{\\n  \\\"company_name\\\": \\\"<company name or Unknown>\\\",\\n  \\\"sender_domain\\\": \\\"<domain from sender email>\\\",\\n  \\\"doc_type\\\": \\\"<email_body|call_transcript|pdf_attachment|pptx_attachment|csv_attachment|calendar_invite|other>\\\",\\n  \\\"deal_indicators\\\": [],\\n  \\\"guessed_deal_company\\\": \\\"<company name>\\\",\\n  \\\"confidence\\\": \\\"<high|medium|low>\\\",\\n  \\\"confidence_score\\\": 0.0,\\n  \\\"reasoning\\\": \\\"<one sentence>\\\"\\n}\\n\\nEmail details:\\nFrom: {{ ($('Gmail: Get Full Message').item.json.from) || (($('Gmail: Get Full Message').item.json.payload?.headers || []).find(h => h.name.toLowerCase() === 'from')?.value) || 'unknown' }}\\nSubject: {{ ($('Gmail: Get Full Message').item.json.subject) || (($('Gmail: Get Full Message').item.json.payload?.headers || []).find(h => h.name.toLowerCase() === 'subject')?.value) || '(no subject)' }}\\nIMPORTANT: If the email contains a .ics attachment or the subject/body contains calendar invite markers (BEGIN:VCALENDAR, DTSTART, DTEND, SUMMARY, ORGANIZER, ATTENDEE) then set doc_type to calendar_invite regardless of other content.\\n\\nBody (first 2000 chars): {{ ($('Gmail: Get Full Message').item.json.text ?? $('Gmail: Get Full Message').item.json.snippet ?? '').slice(0, 2000) }}\"\n    }\n  ]\n}"
       },
       "id": "classify-email",
       "name": "AI: Classify & Attribute Email",
@@ -155,7 +154,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse Anthropic node response\n// Native n8n Anthropic node returns: { text: '...' }\n// HTTP fallback returns: { content: [{ type: 'text', text: '...' }] }\nconst response = $input.first().json;\nconst rawText = response.text || response.content?.[0]?.text || '{}';\n\nlet classification;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error: ' + e.message\n  };\n}\n\n// Get original email data\nconst emailData = $('Gmail: Get Full Message').first().json;\n\nreturn [{\n  json: {\n    ...classification,\n    message_id: emailData.id,\n    subject: emailData.subject,\n    sender_email: emailData.from,\n    email_date: emailData.date,\n    text: emailData.text || emailData.snippet || '',\n    html: emailData.html || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
+        "jsCode": "// Parse Anthropic node response\n// Native n8n Anthropic node returns: { text: '...' }\n// HTTP fallback returns: { content: [{ type: 'text', text: '...' }] }\nconst response = $input.first().json;\nconst rawText = response.text || response.content?.[0]?.text || '{}';\n\nlet classification;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  classification = JSON.parse(cleaned);\n} catch (e) {\n  classification = {\n    company_name: 'Unknown',\n    sender_domain: 'unknown',\n    doc_type: 'email_body',\n    deal_indicators: [],\n    guessed_deal_company: 'Unknown',\n    confidence: 'low',\n    confidence_score: 0.1,\n    reasoning: 'Parse error: ' + e.message\n  };\n}\n\n// Get original email data\n// Gmail node exposes headers as TOP-LEVEL Pascal-case keys: From, Subject, To, Date\n// (not lowercase, not in payload.headers array which may be truncated)\nconst emailData = $('Gmail: Get Full Message').first().json;\n\n// Helper: extract a header value from raw Gmail payload.headers array\nfunction getHeader(headers, name) {\n  if (!headers) return '';\n  const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());\n  return h ? h.value : '';\n}\n\nconst headers = emailData.payload?.headers || [];\n// Check Pascal-case top-level (confirmed), lowercase fallback, then payload.headers array\nconst senderEmail = emailData.From || emailData.from || getHeader(headers, 'From') || '';\nconst subject = emailData.Subject || emailData.subject || getHeader(headers, 'Subject') || '';\nconst emailDate = emailData.Date || emailData.date || getHeader(headers, 'Date') || new Date().toISOString();\n\n// Extract domain from sender email (handles 'Name <email@domain.com>' format)\nfunction extractDomain(emailStr) {\n  const match = emailStr.match(/<([^>]+)>/) || emailStr.match(/([^\\s]+)/);\n  const addr = match ? match[1] : emailStr;\n  const parts = addr.split('@');\n  return parts.length === 2 ? parts[1].toLowerCase() : 'unknown';\n}\nconst resolvedDomain = extractDomain(senderEmail) || classification.sender_domain || 'unknown';\n\n// Extract full body text from Gmail payload\n// Gmail returns body in different places depending on email structure:\n// - Simple text email: emailData.text (n8n surfaces it) OR payload.body.data (base64)\n// - multipart/alternative: body is in payload.parts[*].body.data (base64, mimeType=text/plain)\n// - snippet is only ~200 chars \u2014 never use it as the body\nfunction decodeBase64(str) {\n  if (!str) return '';\n  // Gmail uses URL-safe base64 (replace - with + and _ with /)\n  const standard = str.replace(/-/g, '+').replace(/_/g, '/');\n  try {\n    return Buffer.from(standard, 'base64').toString('utf-8');\n  } catch(e) {\n    return '';\n  }\n}\n\nfunction extractTextFromParts(parts) {\n  if (!parts || !Array.isArray(parts)) return '';\n  for (const part of parts) {\n    if (part.mimeType === 'text/plain' && part.body?.data) {\n      return decodeBase64(part.body.data);\n    }\n    // Recurse into nested multipart\n    if (part.parts) {\n      const nested = extractTextFromParts(part.parts);\n      if (nested) return nested;\n    }\n  }\n  return '';\n}\n\nlet fullText = emailData.text || '';\nif (!fullText || fullText.length < 200) {\n  // Try payload.body.data (simple emails)\n  const bodyData = emailData.payload?.body?.data;\n  if (bodyData) fullText = decodeBase64(bodyData);\n}\nif (!fullText || fullText.length < 200) {\n  // Try payload.parts (multipart emails)\n  fullText = extractTextFromParts(emailData.payload?.parts || []);\n}\nif (!fullText) fullText = emailData.snippet || '';\n\nreturn [{\n  json: {\n    ...classification,\n    sender_domain: resolvedDomain,\n    message_id: emailData.id,\n    subject: subject,\n    sender_email: senderEmail,\n    email_date: emailDate,\n    text: fullText,\n    html: emailData.html || '',\n    attachments: emailData.payload?.parts?.filter(p => p.filename && p.filename.length > 0) || []\n  }\n}];\n"
       },
       "id": "parse-classification",
       "name": "Code: Parse Classification",
@@ -251,7 +250,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT INTO attribution_queue (message_id, sender_email, sender_domain, subject, email_date, ai_guess_company, ai_confidence, doc_type) VALUES ('{{ $json.message_id }}', '{{ $json.sender_email }}', '{{ $json.sender_domain }}', '{{ $json.subject }}', '{{ $json.email_date }}', '{{ $json.guessed_deal_company }}', {{ $json.confidence_score }}, '{{ $json.doc_type }}')",
+        "query": "=INSERT INTO attribution_queue (message_id, sender_email, sender_domain, subject, email_date, ai_guess_company, ai_confidence, doc_type) VALUES ('{{ $json.message_id }}', '{{ $json.sender_email }}', '{{ $json.sender_domain }}', '{{ $json.subject }}', '{{ $json.email_date }}', '{{ $json.guessed_deal_company }}', {{ $json.confidence_score }}, '{{ $json.doc_type }}') ON CONFLICT (message_id) DO NOTHING",
         "options": {}
       },
       "id": "queue-for-confirm",
@@ -271,6 +270,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// Low-confidence emails still get ingested \u2014 just tagged as 'unattributed'\n// so they're searchable once Austin confirms the deal in the attribution queue.\nconst emailData = $('Code: Parse Classification').first().json;\nreturn [{\n  json: {\n    ...emailData,\n    deal_id: 'unattributed',\n    qdrant_namespace: 'unattributed',\n    attribution_confidence: 'low',\n    is_new_deal: false,\n    company_name: emailData.guessed_deal_company || emailData.company_name || 'Unknown'\n  }\n}];\n"
+      },
+      "id": "assign-unattributed",
+      "name": "Code: Assign Unattributed Deal ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        380
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "// Build deal_id from matched deal or generate a slug\n// Always pull email data from Parse Classification (upstream of Postgres lookup)\nconst emailData = $('Code: Parse Classification').first().json;\nconst dealLookup = $('Postgres: Lookup Deal (High)').first()?.json;\n\nlet deal_id = dealLookup?.deal_id;\nif (!deal_id) {\n  const company = (emailData.guessed_deal_company || emailData.company_name || 'unknown')\n    .toLowerCase()\n    .replace(/[^a-z0-9]/g, '_')\n    .replace(/_+/g, '_')\n    .substring(0, 32);\n  const year = new Date().getFullYear();\n  deal_id = `cw_${company}_${year}`;\n}\n\n// If new deal (not found in deals table), insert it\nconst isNewDeal = !dealLookup?.deal_id;\n\nreturn [{\n  json: {\n    ...emailData,\n    deal_id,\n    qdrant_namespace: deal_id,\n    attribution_confidence: emailData.confidence,\n    is_new_deal: isNewDeal,\n    company_name: dealLookup?.company_name || emailData.company_name || emailData.guessed_deal_company\n  }\n}];\n"
       },
       "id": "assign-deal-id",
@@ -286,6 +298,21 @@
       "parameters": {
         "rules": {
           "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.doc_type }}",
+                    "rightValue": "calendar_invite",
+                    "operator": {
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "calendar"
+            },
             {
               "conditions": {
                 "conditions": [
@@ -387,10 +414,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merge extracted text with email metadata\nconst emailData = $input.first().json;\nconst extractedText = emailData.extracted_text || emailData.text || emailData.snippet || '';\n\nreturn [{ json: { ...emailData, extracted_text: extractedText } }];\n"
+        "jsCode": "// Parse thread: split a forwarded/reply email thread into individual messages.\n// Each message gets its own sender, date, and body \u2014 so Qdrant gets accurate timestamps.\n// Falls back to treating the whole body as a single message if no thread structure detected.\n\nconst data = $input.first().json;\nconst rawText = data.extracted_text || data.text || '';\n\n// --- Thread splitter patterns (Gmail, Outlook, Apple Mail) ---\n// Pattern 1: Gmail forwarded message header\n//   ---------- Forwarded message ---------\n//   From: Name <email>\n//   Date: Wed, Jan 21, 2026 at 5:50 PM\nconst GMAIL_FWD = /^-{5,}\\s*Forwarded message\\s*-{5,}\\s*$/im;\n\n// Pattern 2: Gmail/Outlook reply quote header\n//   On Wed, Jan 21, 2026 at 5:50 PM Austin Holland <austin@...> wrote:\nconst REPLY_HEADER = /^On\\s+\\w{3},?\\s+\\w+\\s+\\d+,\\s+\\d{4}\\s+at\\s+[\\d:]+\\s*(AM|PM).*wrote:\\s*$/im;\n\n// Pattern 3: Outlook forwarded block\n//   From: Name <email>\n//   Sent: Wednesday, January 21, 2026 5:50 PM\n//   To: ...\n//   Subject: ...\nconst OUTLOOK_FWD = /^From:\\s*.+\\r?\\nSent:\\s*.+\\r?\\nTo:\\s*/im;\n\n// Helper: extract From/Date from a header block\nfunction parseHeaders(block) {\n  const fromMatch = block.match(/From:\\s*([^\\n\\r]+)/i);\n  const dateMatch = block.match(/(?:Date|Sent):\\s*([^\\n\\r]+)/i);\n  const fromRaw = fromMatch ? fromMatch[1].trim() : '';\n  const dateRaw = dateMatch ? dateMatch[1].trim() : '';\n\n  // Extract email address from 'Name <email>' or bare email\n  const emailMatch = fromRaw.match(/<([^>]+)>/) || fromRaw.match(/(\\S+@\\S+)/);\n  const senderEmail = emailMatch ? emailMatch[1] : fromRaw;\n\n  // Parse date \u2014 JS Date handles most formats gracefully\n  let dateCreated = data.email_date || new Date().toISOString();\n  if (dateRaw) {\n    const parsed = new Date(dateRaw);\n    if (!isNaN(parsed.getTime())) dateCreated = parsed.toISOString();\n  }\n\n  return { senderEmail, dateCreated };\n}\n\n// --- Split logic ---\nlet messages = [];\n\n// Try to split on Gmail forwarded header\nif (GMAIL_FWD.test(rawText)) {\n  const parts = rawText.split(GMAIL_FWD);\n  for (const part of parts) {\n    const trimmed = part.trim();\n    if (!trimmed) continue;\n    const { senderEmail, dateCreated } = parseHeaders(trimmed);\n    // Strip the header lines, keep the body\n    const body = trimmed.replace(/^(From:|Date:|To:|Cc:|Subject:)[^\\n]*\\n/gim, '').trim();\n    if (body.length > 50) messages.push({ senderEmail, dateCreated, body });\n  }\n}\n\n// Try reply-quote headers if no forwarded splits found\nif (messages.length <= 1) {\n  const parts = rawText.split(REPLY_HEADER);\n  if (parts.length > 1) {\n    messages = [];\n    for (const part of parts) {\n      const trimmed = part.trim();\n      if (!trimmed) continue;\n      // Reply headers appear as separators \u2014 try to parse date from preceding line\n      const { senderEmail, dateCreated } = parseHeaders(trimmed);\n      const body = trimmed.replace(/^On\\s+[^\\n]+wrote:/im, '').trim();\n      if (body.length > 50) messages.push({ senderEmail, dateCreated, body });\n    }\n  }\n}\n\n// Try Outlook forwarded block\nif (messages.length <= 1 && OUTLOOK_FWD.test(rawText)) {\n  const parts = rawText.split(/(?=^From:\\s*.+\\r?\\nSent:\\s*)/im);\n  if (parts.length > 1) {\n    messages = [];\n    for (const part of parts) {\n      const trimmed = part.trim();\n      if (!trimmed) continue;\n      const { senderEmail, dateCreated } = parseHeaders(trimmed);\n      const body = trimmed.replace(/^(From:|Sent:|To:|Cc:|Subject:)[^\\n]*\\n/gim, '').trim();\n      if (body.length > 50) messages.push({ senderEmail, dateCreated, body });\n    }\n  }\n}\n\n// Fallback: single message, no thread detected\nif (messages.length === 0) {\n  messages = [{ senderEmail: data.sender_email || '', dateCreated: data.email_date || new Date().toISOString(), body: rawText }];\n}\n\n// Sort chronologically (oldest first)\nmessages.sort((a, b) => new Date(a.dateCreated) - new Date(b.dateCreated));\n\n// Return one item per message, carrying all deal metadata but overriding sender/date per message\nreturn messages.map((msg, i) => ({\n  json: {\n    ...data,\n    extracted_text: msg.body,\n    sender_email: msg.senderEmail || data.sender_email,\n    email_date: msg.dateCreated,\n    thread_index: i,\n    thread_total: messages.length,\n    // Preserve original message_id but make each thread message unique for dedup\n    message_id: messages.length > 1 ? `${data.message_id}_t${i}` : data.message_id\n  }\n}));\n"
       },
-      "id": "merge-extracted",
-      "name": "Code: Merge Extracted Text",
+      "id": "parse-thread",
+      "name": "Code: Parse Thread",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -400,10 +427,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Contextual enrichment: prepend deal/doc context to extracted text\nconst data = $input.first().json;\n\nconst dealId = data.deal_id || 'unknown';\nconst companyName = data.company_name || data.guessed_deal_company || 'Unknown Company';\nconst docType = data.doc_type || 'email';\nconst emailDate = data.email_date ? new Date(data.email_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];\nconst senderEmail = data.sender_email || '';\n\nconst contextHeader = `[DEAL CONTEXT]\\nDeal: ${companyName} (ID: ${dealId})\\nDocument Type: ${docType}\\nDate: ${emailDate}\\nSource: ${senderEmail}\\n[END CONTEXT]\\n\\n`;\n\nconst enrichedText = contextHeader + (data.extracted_text || '');\n\nreturn [{ json: { ...data, enriched_text: enrichedText } }];\n"
+        "jsCode": "// Merge extracted text with email metadata\nconst emailData = $input.first().json;\nconst extractedText = emailData.extracted_text || emailData.text || emailData.snippet || '';\n\nreturn [{ json: { ...emailData, extracted_text: extractedText } }];\n"
       },
-      "id": "contextual-enrichment",
-      "name": "Code: Contextual Enrichment",
+      "id": "merge-extracted",
+      "name": "Code: Merge Extracted Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -413,112 +440,49 @@
     },
     {
       "parameters": {
-        "mode": "insert",
-        "qdrantCollection": {
-          "value": "deals",
-          "mode": "id"
-        },
-        "options": {
-          "metadata": {
-            "metadataValues": []
-          }
-        }
+        "jsCode": "// Contextual enrichment: prepend deal/doc context to extracted text\nconst data = $input.first().json;\n\n// For calendar invites, embeddable_text is already built by Code: Parse ICS\nif (data.doc_type === 'calendar_invite' && data.embeddable_text) {\n  return [{ json: { ...data, enriched_text: data.embeddable_text, extracted_text: data.embeddable_text } }];\n}\n\nconst dealId = data.deal_id || 'unknown';\nconst companyName = data.company_name || data.guessed_deal_company || 'Unknown Company';\nconst docType = data.doc_type || 'email';\nconst senderEmail = data.sender_email || '';\nconst rawText = data.extracted_text || '';\n\n// For call transcripts, try to extract the actual call date from the document content.\n// Transcripts are often forwarded days after the call occurred, so the Gmail Date header\n// reflects when the email was sent, not when the call happened.\n// Look for common transcript date patterns at the top of the document.\nfunction extractTranscriptDate(text) {\n  // Match patterns like:\n  //   Date: January 21, 2026\n  //   Date: 2026-01-21\n  //   Call Date: Wed, Jan 21, 2026\n  //   January 21, 2026  (standalone line near top)\n  const patterns = [\n    /^(?:call\\s+)?date[:\\s]+([\\w,\\s]+\\d{4})/im,\n    /^date[:\\s]+(\\d{4}-\\d{2}-\\d{2})/im,\n    /^(?:meeting|session|call)[\\s\\S]{0,40}?(\\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2},?\\s+\\d{4})/im,\n    /\\b(\\d{4}-\\d{2}-\\d{2})\\b/,\n    /\\b((?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2},?\\s+\\d{4})\\b/i\n  ];\n  // Only scan the first 500 chars \u2014 date lines are always near the top\n  const sample = text.slice(0, 500);\n  for (const pattern of patterns) {\n    const match = sample.match(pattern);\n    if (match) {\n      const parsed = new Date(match[1]);\n      if (!isNaN(parsed.getTime())) return parsed.toISOString();\n    }\n  }\n  return null;\n}\n\nlet resolvedDate = data.email_date;\nif (docType === 'call_transcript') {\n  const transcriptDate = extractTranscriptDate(rawText);\n  if (transcriptDate) resolvedDate = transcriptDate;\n}\n\nconst emailDate = resolvedDate ? new Date(resolvedDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];\n\nconst contextHeader = `[DEAL CONTEXT]\\nDeal: ${companyName} (ID: ${dealId})\\nDocument Type: ${docType}\\nDate: ${emailDate}\\nSource: ${senderEmail}\\n[END CONTEXT]\\n\\n`;\n\nconst enrichedText = contextHeader + rawText;\n\nreturn [{ json: { ...data, enriched_text: enrichedText, email_date: resolvedDate || data.email_date } }];\n"
       },
-      "id": "qdrant-insert",
-      "name": "Qdrant: Insert Vectors",
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
-      "typeVersion": 1,
+      "id": "contextual-enrichment",
+      "name": "Code: Contextual Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split enriched text into chunks, carrying all deal metadata forward.\n// call_transcript: sentence-boundary aware, chunkSize=2500, overlap=250\n//   \u2014 keeps full speaker utterances intact so CAS-scoring evidence\n//     (e.g. \"I would stagegate this...\") never splits across chunks.\n// All other doc types: fixed character split, chunkSize=1800, overlap=180\nconst data = $input.first().json;\nconst text = data.enriched_text || '';\nconst isTranscript = (data.doc_type === 'call_transcript');\nconst chunkSize    = isTranscript ? 2500 : 1800;\nconst chunkOverlap = isTranscript ? 250  : 180;\n\nlet chunks = [];\n\nif (isTranscript) {\n  // Sentence-boundary aware splitting for transcripts.\n  // Split on sentence-ending punctuation OR speaker-turn boundaries (\"Name: \").\n  // Regex: split AFTER . ? ! followed by whitespace+capital, OR at a newline\n  // followed by a word and colon (speaker label like \"Austin:\" or \"Brad:\").\n  const sentenceBreak = /(?<=[.?!])\\s+(?=[A-Z])|(?=\\n[A-Za-z][^:\\n]{0,30}:)/g;\n  const sentences = text.split(sentenceBreak).filter(s => s.trim().length > 0);\n\n  let current = '';\n  for (const sentence of sentences) {\n    if (current.length + sentence.length > chunkSize && current.length > 0) {\n      chunks.push(current.trim());\n      // Overlap: keep the tail of the current chunk as the start of the next\n      const overlapStart = current.length > chunkOverlap\n        ? current.length - chunkOverlap\n        : 0;\n      current = current.slice(overlapStart) + ' ' + sentence;\n    } else {\n      current += (current.length > 0 ? ' ' : '') + sentence;\n    }\n  }\n  if (current.trim().length > 0) chunks.push(current.trim());\n\n} else {\n  // Fixed character split for emails, PDFs, and everything else\n  let start = 0;\n  while (start < text.length) {\n    const end = Math.min(start + chunkSize, text.length);\n    chunks.push(text.slice(start, end));\n    if (end === text.length) break;\n    start = end - chunkOverlap;\n  }\n}\n\nreturn chunks.map((chunk, index) => ({\n  json: {\n    ...data,\n    chunk_text: chunk,\n    chunk_index: index,\n    total_chunks: chunks.length\n  }\n}));\n"
+      },
+      "id": "chunk-text",
+      "name": "Code: Chunk Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         3320,
         150
-      ],
-      "credentials": {
-        "qdrantApi": {
-          "id": "jAwMvJtzXvc1hi4I",
-          "name": "Qdrant Local"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "dataType": "jsonData",
-        "jsonMode": "expressionData",
-        "jsonData": "={{ $json.enriched_text }}",
-        "options": {
-          "metadata": {
-            "metadataValues": [
-              {
-                "name": "deal_id",
-                "value": "={{ $json.deal_id }}"
-              },
-              {
-                "name": "company_name",
-                "value": "={{ $json.company_name || $json.guessed_deal_company }}"
-              },
-              {
-                "name": "doc_type",
-                "value": "={{ $json.doc_type }}"
-              },
-              {
-                "name": "sender_domain",
-                "value": "={{ $json.sender_domain }}"
-              },
-              {
-                "name": "attribution_confidence",
-                "value": "={{ $json.attribution_confidence }}"
-              },
-              {
-                "name": "date_created",
-                "value": "={{ $json.email_date }}"
-              },
-              {
-                "name": "message_id",
-                "value": "={{ $json.message_id }}"
-              },
-              {
-                "name": "chunk_index",
-                "value": "={{ $json.chunk_index || 0 }}"
-              }
-            ]
-          }
-        }
-      },
-      "id": "default-data-loader",
-      "name": "Default Data Loader",
-      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
-      "typeVersion": 1,
-      "position": [
-        3100,
-        320
       ]
     },
     {
       "parameters": {
-        "chunkSize": 500,
-        "chunkOverlap": 50,
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: $json.chunk_text }) }}",
         "options": {}
       },
-      "id": "text-splitter",
-      "name": "Recursive Text Splitter",
-      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
-      "typeVersion": 1,
-      "position": [
-        3100,
-        320
-      ]
-    },
-    {
-      "parameters": {
-        "model": "text-embedding-3-small",
-        "options": {}
-      },
-      "id": "openai-embeddings",
-      "name": "OpenAI Embeddings",
-      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
-      "typeVersion": 1,
+      "id": "embed-chunk",
+      "name": "HTTP: Embed Chunk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [
         3320,
-        320
+        150
       ],
       "credentials": {
         "openAiApi": {
@@ -526,6 +490,38 @@
           "name": "OpenAI API"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Qdrant point with embedding + full metadata payload\n// HTTP Request nodes break paired item chains in n8n \u2014 retrieve chunk data\n// by matching on chunk_index from all Code: Chunk Text outputs.\nconst allItems = $input.all();\nconst allChunks = $('Code: Chunk Text').all();\n\n// UUID v4 without require('crypto') \u2014 n8n sandbox blocks it\nfunction uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\n\n// Build one point per item in input (each is one OpenAI embed response)\nreturn allItems.map((item, i) => {\n  const embedding = item.json.data?.[0]?.embedding;\n  if (!embedding) throw new Error(`No embedding at index ${i}`);\n  // Match chunk by index \u2014 allChunks and allItems are in the same order\n  const chunkData = (allChunks[i] || allChunks[0]).json;\n  const point = {\n    id: uuidv4(),\n    vector: embedding,\n    payload: {\n      deal_id: chunkData.deal_id || 'unknown',\n      company_name: chunkData.company_name || chunkData.guessed_deal_company || 'Unknown',\n      doc_type: chunkData.doc_type || 'email_body',\n      sender_domain: chunkData.sender_domain || '',\n      attribution_confidence: chunkData.attribution_confidence || 'low',\n      date_created: chunkData.email_date || '',\n      message_id: chunkData.message_id || '',\n      chunk_index: chunkData.chunk_index || i,\n      page_content: chunkData.chunk_text || ''\n    }\n  };\n  return { json: { point, ...chunkData } };\n});\n"
+      },
+      "id": "build-qdrant-point",
+      "name": "Code: Build Qdrant Point",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/deals/points",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ points: [$json.point] }) }}",
+        "options": {}
+      },
+      "id": "qdrant-upsert",
+      "name": "HTTP: Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3760,
+        150
+      ]
     },
     {
       "parameters": {
@@ -538,7 +534,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        3980,
+        4200,
         150
       ],
       "credentials": {
@@ -550,10 +546,11 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://localhost:5678/webhook/deal-health-trigger",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Contextual Enrichment').first().json.deal_id, trigger_message_id: $('Code: Contextual Enrichment').first().json.message_id, trigger_type: 'new_ingestion' }) }}",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Count Chunks').first().json.deal_id, trigger_message_id: $('Code: Count Chunks').first().json.message_id, trigger_type: 'new_ingestion' }) }}",
         "options": {}
       },
       "id": "trigger-health-agent",
@@ -561,7 +558,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        3760,
+        4420,
         150
       ],
       "continueOnFail": true
@@ -589,7 +586,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pass deal data through after Postgres upsert (Postgres node output drops context)\nreturn [{ json: $('Code: Assign Deal ID').first().json }];\n"
+        "jsCode": "// Pull deal metadata from the attribution node (Postgres: Upsert Deal outputs {success:true})\n// Use Code: Assign Deal ID as the source of truth for deal metadata\nlet dealData;\ntry {\n  dealData = $('Code: Assign Deal ID').first().json;\n} catch(e) {\n  dealData = $('Code: Assign Unattributed Deal ID').first().json;\n}\nreturn [{ json: dealData }];"
       },
       "id": "passthrough-deal",
       "name": "Code: Pass Deal Data",
@@ -606,11 +603,134 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3540,
+        3980,
         150
       ],
       "parameters": {
-        "jsCode": "// Count how many chunks were inserted into Qdrant\nconst chunks = $input.all();\nconst chunkCount = chunks.length;\n// Pass enrichment data from first chunk + chunk count\nconst enrichData = $('Code: Contextual Enrichment').first().json;\nreturn [{ json: { ...enrichData, chunk_count: chunkCount } }];"
+        "jsCode": "// Count how many chunks were upserted into Qdrant.\n// $input.first().json here is the Qdrant API response \u2014 not chunk metadata.\n// Code: Build Qdrant Point spreads ...chunkData (with message_id, deal_id, etc.)\n// so we pull directly from that node by name.\nconst enrichData = $('Code: Build Qdrant Point').first().json;\nconst chunkCount = enrichData.total_chunks || $('Code: Build Qdrant Point').all().length;\nreturn [{ json: { ...enrichData, chunk_count: chunkCount } }];"
+      }
+    },
+    {
+      "id": "aabbccdd-1122-3344-5566-778899aabbcc",
+      "name": "Code: Normalize For Dedup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Normalise email fields for content-level dedup\n// Strips FW:/Re:/Fwd: prefix from subject so forwarded copies are caught\nconst msg = $input.first().json;\n\nfunction getHeader(headers, name) {\n  if (!headers) return '';\n  const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());\n  return h ? h.value : '';\n}\nconst headers = msg.payload?.headers || [];\nconst rawSubject = msg.Subject || msg.subject || getHeader(headers, 'Subject') || '';\nconst rawFrom    = msg.From    || msg.from    || getHeader(headers, 'From')    || '';\n\n// Strip reply/forward prefixes recursively\nconst normSubject = rawSubject.replace(/^(fw:|re:|fwd:|forward:)\\s*/gi, '').trim().toLowerCase();\n\n// Extract domain from From header  'Name <email@domain.com>' or 'email@domain.com'\nconst addrMatch = rawFrom.match(/<([^>]+)>/) || rawFrom.match(/(\\S+@\\S+)/);\nconst senderAddr = addrMatch ? addrMatch[1] : rawFrom;\nconst domain = senderAddr.includes('@') ? senderAddr.split('@')[1].toLowerCase().replace(/['>]/g,'') : '';\n\nreturn [{ json: { ...msg, norm_subject: normSubject, sender_domain_dedup: domain } }];\n"
+      }
+    },
+    {
+      "id": "ics-parser-0001-0000-0000-000000000001",
+      "name": "Code: Parse ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Parse .ics calendar invite from Gmail attachment or email body\nconst emailData = $('Gmail: Get Full Message').first().json;\nconst dealData = $('Code: Pass Deal Data').first().json;\n\nlet icsText = '';\n\nfunction findIcsInParts(parts) {\n  if (!parts) return '';\n  for (const part of parts) {\n    const mime = part.mimeType || '';\n    const filename = part.filename || '';\n    if (mime === 'text/calendar' || filename.endsWith('.ics')) {\n      const data = part.body?.data || '';\n      if (data) return Buffer.from(data.replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');\n    }\n    if (part.parts) {\n      const found = findIcsInParts(part.parts);\n      if (found) return found;\n    }\n  }\n  return '';\n}\nicsText = findIcsInParts(emailData.payload?.parts || []);\n\nif (!icsText) {\n  try {\n    const fetched = $input.first().json;\n    if (fetched && fetched.data) {\n      icsText = Buffer.from(fetched.data.replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');\n    }\n  } catch(e) {}\n}\n\nif (!icsText) {\n  const body = emailData.text || emailData.snippet || '';\n  if (body.includes('BEGIN:VCALENDAR')) icsText = body;\n}\n\nif (!icsText && $input.first().binary) {\n  const binaryKeys = Object.keys($input.first().binary || {});\n  for (const key of binaryKeys) {\n    const b = $input.first().binary[key];\n    if (b.mimeType === 'text/calendar' || (b.fileName || '').endsWith('.ics')) {\n      icsText = Buffer.from(b.data, 'base64').toString('utf8');\n      break;\n    }\n  }\n}\n\nif (!icsText) {\n  throw new Error('No ICS content found in email');\n}\n\nfunction unfoldICS(text) {\n  return text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\n}\nicsText = unfoldICS(icsText);\n\nfunction getVEventBlock(text) {\n  const start = text.indexOf('BEGIN:VEVENT');\n  const end = text.indexOf('END:VEVENT');\n  if (start >= 0 && end >= 0) return text.slice(start, end + 10);\n  return text;\n}\nconst veventText = getVEventBlock(icsText);\n\nfunction getICSField(text, field) {\n  const lines = text.split(/\\r?\\n/);\n  for (const line of lines) {\n    const upper = line.toUpperCase();\n    if (upper.startsWith(field + ':') || upper.startsWith(field + ';')) {\n      const lastColon = line.lastIndexOf(':');\n      return lastColon >= 0 ? line.slice(lastColon + 1).trim() : '';\n    }\n  }\n  return '';\n}\n\nfunction getICSFieldAll(text, field) {\n  const lines = text.split(/\\r?\\n/);\n  const results = [];\n  for (const line of lines) {\n    const upper = line.toUpperCase();\n    if (upper.startsWith(field + ':') || upper.startsWith(field + ';')) {\n      const lastColon = line.lastIndexOf(':');\n      if (lastColon >= 0) results.push(line.slice(lastColon + 1).trim());\n    }\n  }\n  return results;\n}\n\nfunction getCN(text, field) {\n  const lines = text.split(/\\r?\\n/);\n  for (const line of lines) {\n    const upper = line.toUpperCase();\n    if (upper.startsWith(field + ':') || upper.startsWith(field + ';')) {\n      const cnMatch = line.match(/CN=([^;:]+)/i);\n      return cnMatch ? cnMatch[1].trim() : '';\n    }\n  }\n  return '';\n}\n\nfunction getCNAll(text, field) {\n  const lines = text.split(/\\r?\\n/);\n  const results = [];\n  for (const line of lines) {\n    const upper = line.toUpperCase();\n    if (upper.startsWith(field + ':') || upper.startsWith(field + ';')) {\n      const cnMatch = line.match(/CN=([^;:]+)/i);\n      results.push(cnMatch ? cnMatch[1].trim() : '');\n    }\n  }\n  return results;\n}\n\nfunction parseICSDate(dtStr) {\n  if (!dtStr) return null;\n  if (dtStr.match(/^\\d{4}-\\d{2}-\\d{2}T/)) return dtStr;\n  const val = dtStr.trim();\n  if (val.length >= 15) {\n    return val.slice(0,4) + '-' + val.slice(4,6) + '-' + val.slice(6,8) + 'T' + val.slice(9,11) + ':' + val.slice(11,13) + ':' + val.slice(13,15);\n  } else if (val.length === 8) {\n    return val.slice(0,4) + '-' + val.slice(4,6) + '-' + val.slice(6,8) + 'T00:00:00';\n  }\n  return null;\n}\n\nfunction inferMeetingType(summary) {\n  const s = (summary || '').toLowerCase();\n  if (s.includes('discovery') || s.includes('intro') || s.includes('initial')) return 'discovery_call';\n  if (s.includes('demo') || s.includes('presentation')) return 'demo';\n  if (s.includes('debrief') || s.includes('follow')) return 'follow_up';\n  if (s.includes('validation') || s.includes('proof')) return 'validation_meeting';\n  if (s.includes('negotiat') || s.includes('contract') || s.includes('pricing')) return 'negotiation';\n  if (s.includes('kickoff')) return 'kickoff';\n  if (s.includes('check') || s.includes('sync') || s.includes('status')) return 'check_in';\n  if (s.includes('scoping') || s.includes('scope')) return 'scoping';\n  return 'meeting';\n}\n\n// Helper: extract domain from email address string\nfunction extractEmailDomain(emailStr) {\n  const match = emailStr.match(/<([^>]+)>/) || emailStr.match(/([^\\s@]+@[^\\s]+)/);\n  const addr = match ? match[1] : emailStr;\n  const parts = addr.trim().split('@');\n  return parts.length === 2 ? parts[1].toLowerCase().replace(/[^a-z0-9.-]/g, '') : '';\n}\n\n// Helper: derive company name from domain (strip TLD + common subdomains)\nfunction domainToCompany(domain) {\n  if (!domain) return 'Unknown';\n  const stripped = domain.replace(/^(mail|smtp|mx|email)\\./i, '');\n  const parts = stripped.split('.');\n  const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];\n  return name.charAt(0).toUpperCase() + name.slice(1);\n}\n\nconst summary = getICSField(veventText, 'SUMMARY');\nconst cleanSummary = summary.replace(/^(FW|RE|FWD):\\s*/i, '').trim();\nconst dtStartRaw = getICSField(veventText, 'DTSTART');\nconst dtEndRaw = getICSField(veventText, 'DTEND');\nconst dtStart = parseICSDate(dtStartRaw);\nconst dtEnd = parseICSDate(dtEndRaw);\nconst location = getICSField(veventText, 'LOCATION');\nconst description = getICSField(veventText, 'DESCRIPTION').replace(/\\\\n/g, '\\n').slice(0, 1000);\nconst organizerEmail = getICSField(veventText, 'ORGANIZER').replace('mailto:', '').trim();\nconst organizerName = getCN(veventText, 'ORGANIZER');\nconst organizer = organizerName ? organizerName + ' <' + organizerEmail + '>' : organizerEmail;\n\nconst attendeeEmails = getICSFieldAll(veventText, 'ATTENDEE').map(v => v.replace('mailto:', '').trim());\nconst attendeeCNs = getCNAll(veventText, 'ATTENDEE');\nconst attendees = attendeeEmails.map((email, i) => ({\n  email,\n  name: attendeeCNs[i] || ''\n})).filter(a => {\n  const e = a.email.toLowerCase();\n  return a.email && a.email.includes('@') &&\n    !e.includes('austin.holland') &&\n    !e.includes('raustinholland');\n});\n\nconst meetingType = inferMeetingType(cleanSummary);\n\n// --- Deal attribution override from attendee domain ---\n// If the existing deal is 'unknown' or the sender domain was the forwarding account,\n// re-derive deal info from the first external attendee's domain.\nconst internalDomains = ['clearwatersecurity.com', 'gmail.com'];\nlet resolvedDealId = dealData.deal_id;\nlet resolvedCompany = dealData.company_name;\nlet resolvedDomain = dealData.sender_domain;\n\nif (attendees.length > 0) {\n  const firstExternal = attendees[0];\n  const attendeeDomain = extractEmailDomain(firstExternal.email);\n  const isCurrentDomainInternal = internalDomains.some(d => (dealData.sender_domain || '').includes(d));\n  const isCurrentDealUnknown = (dealData.deal_id || '').includes('unknown') || resolvedCompany === 'Unknown';\n\n  if (attendeeDomain && (isCurrentDomainInternal || isCurrentDealUnknown)) {\n    // Re-derive deal from attendee domain\n    const company = domainToCompany(attendeeDomain);\n    const slug = attendeeDomain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 32);\n    const year = new Date().getFullYear();\n    resolvedDealId = 'cw_' + slug + '_' + year;\n    resolvedCompany = company;\n    resolvedDomain = attendeeDomain;\n  }\n}\n\nconst embeddableText = [\n  '[CALENDAR EVENT]',\n  'Title: ' + cleanSummary,\n  'Meeting Type: ' + meetingType,\n  'Date: ' + (dtStart || 'Unknown'),\n  'Organizer: ' + organizer,\n  'Attendees: ' + attendees.map(a => a.name ? a.name + ' <' + a.email + '>' : a.email).join(', '),\n  'Location: ' + (location || 'Not specified'),\n  'Description: ' + (description || 'None'),\n  'Deal: ' + resolvedCompany + ' (' + resolvedDealId + ')',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...dealData,\n    deal_id: resolvedDealId,\n    qdrant_namespace: resolvedDealId,\n    company_name: resolvedCompany,\n    sender_domain: resolvedDomain,\n    doc_type: 'calendar_invite',\n    event_summary: cleanSummary,\n    event_start: dtStart || null,\n    event_end: dtEnd || null,\n    event_location: location || null,\n    event_description: description || null,\n    event_organizer: organizer || null,\n    event_attendees: JSON.stringify(attendees),\n    meeting_type: meetingType,\n    embeddable_text: embeddableText,\n    ics_raw: icsText.slice(0, 2000)\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "calendar-insert-0001-0000-0000-000000000001",
+      "name": "Postgres: Insert Calendar Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.calendar_insert_sql }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "xpOkGGPOOouHtRhJ",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "ics-merge-0001-0000-0000-000000000001",
+      "name": "Code: Merge ICS Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        400
+      ],
+      "parameters": {
+        "jsCode": "\n// Merge ICS parsed data into the standard text format expected by\n// Code: Contextual Enrichment \u2192 Code: Chunk Text \u2192 HTTP: Embed Chunk pipeline\n// $input here is Postgres: Insert Calendar Event which returns {success:true}\n// Pull the actual ICS data from the Parse ICS node\nconst d = $('Code: Parse ICS').first().json;\nreturn [{\n  json: {\n    ...d,\n    extracted_text: d.embeddable_text,\n    source_type: 'calendar_invite'\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "cal-sql-builder-0001-0000-0000-000000000001",
+      "name": "Code: Build Calendar SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        400
+      ],
+      "parameters": {
+        "jsCode": "\nconst d = $input.first().json;\n\nfunction sq(v) {\n  if (v === null || v === undefined) return 'NULL';\n  return \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\n// Parse attendees JSON array and build Postgres TEXT[] literal\nlet attendeesArr = [];\ntry {\n  const parsed = JSON.parse(d.event_attendees || '[]');\n  attendeesArr = parsed.map(a => {\n    const label = a.name ? `${a.name} <${a.email}>` : a.email;\n    return label;\n  });\n} catch(e) {}\n\nconst attendeesPg = attendeesArr.length > 0\n  ? \"ARRAY[\" + attendeesArr.map(a => \"'\" + a.replace(/'/g, \"''\") + \"'\").join(', ') + \"]\"\n  : \"ARRAY[]::text[]\";\n\nconst googleEventId = d.message_id\n  ? d.message_id\n  : (d.deal_id + '_' + Date.now());\n\nconst descriptionVal = d.event_organizer\n  ? sq('Organizer: ' + (d.event_organizer || '') + '\\n' + (d.event_description || ''))\n  : (d.event_description ? sq(d.event_description) : 'NULL');\n\nconst sql = `INSERT INTO calendar_events\n  (google_event_id, deal_id, title, description, start_time, end_time, location, attendees, meeting_type, agenda_sent)\nVALUES (\n  ${sq(googleEventId)},\n  ${sq(d.deal_id)},\n  ${sq(d.event_summary)},\n  ${descriptionVal},\n  ${(d.event_start && d.event_start.match(/^\\d{4}-\\d{2}-\\d{2}T/)) ? sq(d.event_start) : 'NULL'},\n  ${(d.event_end && d.event_end.match(/^\\d{4}-\\d{2}-\\d{2}T/)) ? sq(d.event_end) : 'NULL'},\n  ${d.event_location ? sq(d.event_location) : 'NULL'},\n  ${attendeesPg},\n  ${sq(d.meeting_type || 'meeting')},\n  false\n) ON CONFLICT (google_event_id) DO NOTHING`;\n\nreturn [{ json: { ...d, calendar_insert_sql: sql } }];\n"
+      }
+    },
+    {
+      "id": "53c845f5-9d32-40c5-98f2-9e4584306b60",
+      "name": "HTTP: Fetch ICS Attachment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2760,
+        400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ (function() { const msgId = $('Gmail: Get Full Message').first().json.id; function findIcsAttachmentId(parts) { if (!parts) return null; for (const p of parts) { const mime = (p.mimeType || '').toLowerCase(); const fname = (p.filename || '').toLowerCase(); if (mime === 'text/calendar' || fname.endsWith('.ics')) { return p.body && p.body.attachmentId ? p.body.attachmentId : null; } if (p.parts) { const found = findIcsAttachmentId(p.parts); if (found) return found; } } return null; } const attachId = findIcsAttachmentId($('Gmail: Get Full Message').first().json.payload?.parts || []); return 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + msgId + '/attachments/' + (attachId || 'none'); })() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "3MFqaWbGTKhRcnUF",
+          "name": "Gmail Ingestion Inbox"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO deals (deal_id, company_name, sender_domains, deal_stage, deal_owner, is_active) VALUES ('{{ $json.deal_id }}', '{{ $json.company_name }}', ARRAY['{{ $json.sender_domain }}'], 'discover', 'austin.holland@clearwatersecurity.com', true) ON CONFLICT (deal_id) DO UPDATE SET company_name = CASE WHEN deals.company_name = 'Unknown' THEN EXCLUDED.company_name ELSE deals.company_name END, sender_domains = CASE WHEN deals.company_name = 'Unknown' THEN EXCLUDED.sender_domains ELSE deals.sender_domains END",
+        "options": {}
+      },
+      "id": "upsert-deal-ics-0001-0000-0000-000000000001",
+      "name": "Postgres: Upsert Deal (ICS)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3100,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
       }
     }
   ],
@@ -630,7 +750,7 @@
       "main": [
         [
           {
-            "node": "Postgres: Check Duplicate",
+            "node": "Code: Normalize For Dedup",
             "type": "main",
             "index": 0
           }
@@ -729,6 +849,28 @@
         ]
       ]
     },
+    "Postgres: Queue for Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Code: Assign Unattributed Deal ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Assign Unattributed Deal ID": {
+      "main": [
+        [
+          {
+            "node": "Code: Pass Deal Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Postgres: Upsert Deal": {
       "main": [
         [
@@ -755,7 +897,7 @@
       "main": [
         [
           {
-            "node": "Code: Extract Email Body",
+            "node": "HTTP: Fetch ICS Attachment",
             "type": "main",
             "index": 0
           }
@@ -777,13 +919,25 @@
         [
           {
             "node": "Extract from File (PDF/DOCX/TXT)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Code: Extract Email Body": {
+      "main": [
+        [
+          {
+            "node": "Code: Parse Thread",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code: Extract Email Body": {
+    "Code: Parse Thread": {
       "main": [
         [
           {
@@ -820,19 +974,47 @@
       "main": [
         [
           {
-            "node": "Qdrant: Insert Vectors",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Default Data Loader",
+            "node": "Code: Chunk Text",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Qdrant: Insert Vectors": {
+    "Code: Chunk Text": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Embed Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Embed Chunk": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Qdrant Point",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Qdrant Point": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Qdrant Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Qdrant Upsert": {
       "main": [
         [
           {
@@ -854,44 +1036,88 @@
         ]
       ]
     },
-    "Recursive Text Splitter": {
-      "ai_textSplitter": [
-        [
-          {
-            "node": "Default Data Loader",
-            "type": "ai_textSplitter",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "OpenAI Embeddings": {
-      "ai_embedding": [
-        [
-          {
-            "node": "Qdrant: Insert Vectors",
-            "type": "ai_embedding",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Default Data Loader": {
-      "ai_document": [
-        [
-          {
-            "node": "Qdrant: Insert Vectors",
-            "type": "ai_document",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Code: Count Chunks": {
       "main": [
         [
           {
             "node": "Postgres: Log Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Normalize For Dedup": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Parse ICS": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Deal (ICS)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Code: Merge ICS Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Merge ICS Text": {
+      "main": [
+        [
+          {
+            "node": "Code: Contextual Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Calendar SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Fetch ICS Attachment": {
+      "main": [
+        [
+          {
+            "node": "Code: Parse ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Deal (ICS)": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Calendar SQL",
             "type": "main",
             "index": 0
           }

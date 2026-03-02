@@ -17,8 +17,8 @@
 #   2. Uses temp files (not shell variables) to handle control characters safely
 #      in Code node JavaScript content.
 #   3. PUTs the clean payload to n8n.
-#   4. Follows with deactivate → activate cycle to flush the execution engine
-#      cache (required for schedule-triggered workflows; harmless for webhooks).
+#   4. Restarts the n8n Docker container to flush the execution engine cache
+#      and re-register all poll/schedule triggers cleanly.
 #   5. Verifies the workflow is active and reports the final state.
 #
 # Requirements:
@@ -164,37 +164,28 @@ fi
 UPDATED_AT=$(echo "$PUT_BODY" | jq -r '.updatedAt // "unknown"')
 echo "  ✓ PUT successful (HTTP 200) — updatedAt: $UPDATED_AT"
 
-# ── Deactivate → Activate cycle to flush execution engine cache ───────────────
-# This forces the ActiveWorkflowManager to deregister the old version and
-# re-register from the updated DB record. Required for schedule-triggered
-# workflows; for webhook-triggered workflows it also re-registers webhook paths.
+# ── Restart n8n container to flush execution engine cache ─────────────────────
+# n8n 2.9.x has a bug where the API deactivate→activate cycle deregisters poll
+# triggers (Gmail, schedule) without re-registering them, silently breaking the
+# cron. A container restart re-registers all active workflow triggers cleanly.
 echo ""
-echo "Step 4/4: Flushing execution engine cache (deactivate → activate)..."
+echo "Step 4/4: Restarting n8n to flush execution engine cache..."
 
-# Deactivate
-DEACT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -X POST "$N8N_URL/api/v1/workflows/$WORKFLOW_ID/deactivate" \
-  -H "X-N8N-API-KEY: $N8N_API_KEY")
+cd "$PROJECT_DIR"
+docker compose restart n8n > /dev/null 2>&1
 
-if [[ "$DEACT_STATUS" != "200" ]]; then
-  echo "  WARNING: Deactivate returned HTTP $DEACT_STATUS (workflow may already be inactive)"
-fi
-
-# Brief pause to let n8n complete deregistration before re-activating
-sleep 1
-
-# Activate
-ACT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  -X POST "$N8N_URL/api/v1/workflows/$WORKFLOW_ID/activate" \
-  -H "X-N8N-API-KEY: $N8N_API_KEY")
-
-if [[ "$ACT_STATUS" != "200" ]]; then
-  echo "ERROR: Activate returned HTTP $ACT_STATUS — workflow may be inactive!" >&2
-  echo "  Check n8n UI at $N8N_URL and manually activate the workflow." >&2
-  exit 1
-fi
-
-echo "  ✓ Workflow deactivated and re-activated — execution cache flushed"
+# Wait for n8n to come back up
+for i in {1..20}; do
+  sleep 2
+  HEALTH=$(curl -s -o /dev/null -w "%{http_code}" "$N8N_URL/healthz" 2>/dev/null || echo "000")
+  if [[ "$HEALTH" == "200" ]]; then
+    echo "  ✓ n8n restarted and healthy — all triggers re-registered"
+    break
+  fi
+  if [[ $i -eq 20 ]]; then
+    echo "  WARNING: n8n did not come back up within 40s. Check: docker compose logs n8n" >&2
+  fi
+done
 
 # ── Final verification ────────────────────────────────────────────────────────
 TMP_VERIFY=$(mktemp)

@@ -1,270 +1,819 @@
 {
-  "name": "CW-02: Deal Health Agent (P2V2C2)",
+  "id": "oOnzLBeQzu5M7nc4",
+  "name": "CW-02: Deal Health Agent",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "deal-health-trigger",
-        "responseMode": "onReceived",
+        "responseMode": "responseNode",
         "options": {}
       },
-      "id": "webhook-trigger",
-      "name": "Webhook: Health Trigger",
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "webhookId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Webhook: Deal Health Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
-      "notes": "Receives POST from Ingestion Pipeline with {deal_id, trigger_message_id, trigger_type}. Also callable on schedule."
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
         "rule": {
-          "interval": [{ "field": "cronExpression", "expression": "0 20 * * 1-5" }]
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 21 * * 1-5"
+            }
+          ]
         }
       },
-      "id": "nightly-trigger",
-      "name": "Schedule: Nightly Rescore (8pm ET)",
+      "id": "ff7391b8-b005-40c0-971f-0db7f18d8206",
+      "name": "Schedule: Nightly Rescore (9pm ET)",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
-      "position": [240, 480],
-      "notes": "Rescores all active deals every weeknight at 8pm ET regardless of new ingestion."
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        500
+      ]
     },
     {
       "parameters": {
-        "operation": "select",
-        "query": "SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage, d.deal_value_usd, d.close_date, d.forecast_category, d.salesforce_opp_id, dh.pain_score, dh.power_score, dh.vision_score, dh.value_score, dh.change_score, dh.control_score, dh.p2v2c2_total, dh.scored_at as last_scored FROM deals d LEFT JOIN v_deal_health_latest dh ON dh.deal_id = d.deal_id WHERE d.deal_id = $1 AND d.is_active = TRUE",
-        "additionalFields": {
-          "queryParams": "={{ [$json.body?.deal_id || $json.deal_id] }}"
-        }
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'accepted', deal_id: $json.body?.deal_id || 'received' }) }}",
+        "options": {}
       },
-      "id": "get-deal-context",
+      "id": "44e1ddb7-37c5-4800-a69c-4beadb106b28",
+      "name": "Webhook: Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT deal_id, company_name, deal_stage, salesforce_stage, close_date, forecast_category FROM deals WHERE is_active = true ORDER BY updated_at DESC",
+        "options": {}
+      },
+      "id": "44ec238d-5d12-470f-93e7-ba156336cdf9",
+      "name": "Postgres: Get All Active Deals",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        460,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize both trigger paths into a consistent deal list\n// Webhook: single deal from body\n// Nightly: all active deals from Postgres\nconst items = $input.all();\n\n// Webhook path — body has deal_id\nif (items[0]?.json?.body?.deal_id) {\n  const body = items[0].json.body;\n  return [{\n    json: {\n      deal_id: body.deal_id,\n      trigger_message_id: body.trigger_message_id || null,\n      trigger_type: body.trigger_type || 'webhook'\n    }\n  }];\n}\n\n// Nightly path — items are rows from Postgres: Get All Active Deals\nreturn items.map(item => ({\n  json: {\n    deal_id: item.json.deal_id,\n    company_name: item.json.company_name,\n    deal_stage: item.json.deal_stage,\n    salesforce_stage: item.json.salesforce_stage,\n    close_date: item.json.close_date,\n    forecast_category: item.json.forecast_category,\n    trigger_message_id: null,\n    trigger_type: 'nightly'\n  }\n}));\n"
+      },
+      "id": "66259b84-bdf2-4fab-b44b-338f0c279858",
+      "name": "Code: Normalize Trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT d.deal_id, d.company_name, d.deal_stage, d.salesforce_stage, d.close_date, d.forecast_category, dh.scored_at AS last_scored_at, dh.p2v2c2_total AS last_total FROM deals d LEFT JOIN LATERAL (SELECT scored_at, p2v2c2_total FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1) dh ON true WHERE d.deal_id = '{{ $json.deal_id }}' AND d.is_active = true LIMIT 1",
+        "options": {}
+      },
+      "id": "29e5d061-cf86-4b8f-92a4-c6397f490682",
       "name": "Postgres: Get Deal Context",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
-      "position": [500, 300],
+      "position": [
+        900,
+        400
+      ],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Fetches current deal metadata and last known scores for trend comparison."
-    },
-    {
-      "parameters": {
-        "jsCode": "// Build all 6 P2V2C2 RAG queries + CAS + PE Sponsor + context queries\n// Each query is specifically tuned to Clearwater CPS methodology\nconst deal = items[0].json;\nconst company = deal.company_name || 'the prospect';\nconst dealId = deal.deal_id;\n\nconst queries = [\n  {\n    dimension: 'pain',\n    query: `What compelling reason to change, urgent business problem, or cybersecurity/compliance pain has ${company} expressed? What is driving this opportunity? Has the Executive Sponsor admitted the pain is large enough to change?`,\n    score_rubric: '0=no pain known, 1=PC shared situation, 2=PC admitted pain, 3=PC indicated PES pain, 4=PES admitted pain, 5=ES agreed pain large enough to change'\n  },\n  {\n    dimension: 'power',\n    query: `Who are the key power contacts at ${company}? Have we met with the Executive Sponsor or Potential Executive Sponsor? Has the ES agreed to the Dual Action Plan? Are we working with someone with budget authority and decision-making power?`,\n    score_rubric: '0=no idea who power is, 1=have indication of PES, 2=Champion agreed to take us to PES, 3=met with PES, 4=ES agreed to DAP, 5=DAP steps on schedule'\n  },\n  {\n    dimension: 'vision',\n    query: `What future state vision has been co-created with ${company}? Have we mapped our cybersecurity capabilities to their specific needs? Has the Executive Sponsor agreed to a vision of improved future state? Is the ES painting the vision to others?`,\n    score_rubric: '0=no idea of needs, 1=begun to define needs, 2=mapped capabilities to needs, 3=agreed to proof criteria, 4=ES agreed to vision of improved future state, 5=ES painting vision for others in org'\n  },\n  {\n    dimension: 'value',\n    query: `What financial justification, ROI, or cost of the problem has been established with ${company}? Have they defined the cost of their pain? Has the Executive Sponsor shared ROI projections with finance or the Decision Maker? Have financial terms been agreed?`,\n    score_rubric: '0=benefits unknown, 1=believe their situation causing pain, 2=defined cost of pain, 3=believe solution can address pain, 4=ES shared ROI with DM, 5=DM agreed to financial terms'\n  },\n  {\n    dimension: 'change',\n    query: `Has ${company} committed to change? Has the Potential Champion confirmed the PES will meet with us? Has the PES agreed they need to change? Has the Executive Sponsor chosen Clearwater to lead the change? Has the ES convinced the ultimate Decision Maker they must change?`,\n    score_rubric: '0=no one committed to change, 1=PC is open to change, 2=PC confirmed PES will meet us, 3=PES agreed they need to change, 4=ES chosen Clearwater to lead change, 5=ES convinced DM they must change'\n  },\n  {\n    dimension: 'control',\n    query: `What is our level of control over the sales process with ${company}? Do we understand their buying process? Have we created a Dual Action Plan (DAP) with dates and owners? Has the ES agreed to the DAP? Is the DAP on schedule and complete?`,\n    score_rubric: '0=buying process unknown, 1=Champion described process as they know it, 2=met with PES, 3=pain admitted and vision created for ES, 4=ES agreed to DAP, 5=DAP complete'\n  },\n  {\n    dimension: 'pe_sponsor',\n    query: `Who is the Potential Executive Sponsor or Executive Sponsor at ${company}? What is their level of engagement, support, and commitment? Are they actively helping us? Have they committed to the DAP and are they accessible?`,\n    score_rubric: '1=minimal engagement, 2=aware and open, 3=actively participating, 4=strong advocate, 5=fully committed and championing Clearwater internally'\n  },\n  {\n    dimension: 'critical_activity_stage',\n    query: `What is the current Clearwater sales stage and critical activity for ${company}? What critical activities have been completed (pre-qualify, champion identified, DAP agreed, co-create session, approach document, validation meeting)? What stage are we in - Discover, Qualify, Prove, Negotiate, or Close?`,\n    score_rubric: 'Map to CPS stages: Discover (1A-1D), Qualify (2A-2D), Prove (3A-3D), Negotiate (4A-4C), Close (5A-5D)'\n  },\n  {\n    dimension: 'dap',\n    query: `What is the status of the Dual Action Plan (DAP) with ${company}? What milestones have been completed? What milestones are open? Are there any gaps larger than 14 days between milestones? What is the next milestone and its due date? What is the agreed close or contract date?`,\n    score_rubric: 'Track: agreed=yes/no, milestones complete/total, 14-day gap rule, next milestone, timeline'\n  },\n  {\n    dimension: 'current_state',\n    query: `What is the current state of ${company}'s cybersecurity, compliance, and risk management program? What are their current organization structure, activities/processes, and technology/tools in their security program? What problems or gaps exist?`,\n    score_rubric: 'Describe: Organization, Activities, Technology'\n  },\n  {\n    dimension: 'future_state',\n    query: `What future state vision has ${company} described for their cybersecurity and compliance program? What organizational changes, process improvements, or technology goals have they expressed? What does their ideal improved state look like?`,\n    score_rubric: 'Describe: Organization, Activities, Technology'\n  },\n  {\n    dimension: 'stakeholders',\n    query: `Who are the key stakeholders at ${company}? What are the Champion's goals and success criteria? What are the Board or executive-level goals and success criteria? What matters most to each decision maker?`,\n    score_rubric: 'List: Champion goals, Board/exec goals, individual stakeholder success criteria'\n  },\n  {\n    dimension: 'risks',\n    query: `What are the strategic risks in the ${company} deal? Are there competitive threats, incumbent vendor relationships, internal political risks, budget risks, timeline risks, or other deal-threatening factors? Any signs of an incumbent vendor \"vulture maneuver\"?`,\n    score_rubric: 'List all identified risks with severity'\n  },\n  {\n    dimension: 'next_steps_and_actions',\n    query: `What are the most recent agreed next steps with ${company}? What specific action items were committed to by the prospect? What internal actions does the Clearwater AE need to take? When is the next scheduled meeting or deadline?`,\n    score_rubric: 'Extract: next step, date, prospect actions, internal AE actions'\n  },\n  {\n    dimension: 'services',\n    query: `What Clearwater services, products, or solutions have been discussed or implied in conversations with ${company}? What cybersecurity or compliance services are they interested in? What is the scope of potential engagement?`,\n    score_rubric: 'List specific services mentioned or implied'\n  }\n];\n\nreturn queries.map(q => ({ json: { ...deal, ...q } }));\n"
-      },
-      "id": "build-rag-queries",
-      "name": "Code: Build P2V2C2 RAG Queries",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [720, 300],
-      "notes": "Generates 15 targeted RAG queries — one per CPS dimension. Each query uses Clearwater-specific language (DAP, PES, ES, Champion)."
-    },
-    {
-      "parameters": {
-        "mode": "retrieve-as-text",
-        "qdrantCollection": {
-          "value": "deals",
-          "mode": "id"
-        },
-        "prompt": "={{ $json.query }}",
-        "topK": 6,
-        "options": {
-          "host": "http://qdrant:6333",
-          "filter": "={{ JSON.stringify({ must: [{ key: 'deal_id', match: { value: $json.deal_id } }] }) }}"
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
         }
-      },
-      "id": "qdrant-retrieve",
-      "name": "Qdrant: Retrieve per Dimension",
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
-      "typeVersion": 1,
-      "position": [940, 300],
-      "credentials": {
-        "qdrantApi": { "id": "qdrant-cred", "name": "Qdrant Local" }
-      },
-      "notes": "Retrieves top-6 chunks per dimension, filtered strictly to the deal's namespace."
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate all RAG results by dimension\n// Group chunks by dimension for the master scoring prompt\nconst allResults = items;\nconst grouped = {};\n\nfor (const item of allResults) {\n  const dim = item.json.dimension;\n  if (!grouped[dim]) {\n    grouped[dim] = {\n      dimension: dim,\n      query: item.json.query,\n      score_rubric: item.json.score_rubric,\n      retrieved_text: item.json.text || item.json.document || '',\n      deal_id: item.json.deal_id,\n      company_name: item.json.company_name,\n      deal_stage: item.json.deal_stage,\n      salesforce_stage: item.json.salesforce_stage,\n      close_date: item.json.close_date,\n      deal_value_usd: item.json.deal_value_usd,\n      forecast_category: item.json.forecast_category\n    };\n  } else {\n    grouped[dim].retrieved_text += '\\n\\n---\\n\\n' + (item.json.text || item.json.document || '');\n  }\n}\n\n// Return as single item with all dimensions grouped\nreturn [{ json: { \n  deal_id: allResults[0]?.json?.deal_id,\n  company_name: allResults[0]?.json?.company_name,\n  salesforce_stage: allResults[0]?.json?.salesforce_stage,\n  deal_stage: allResults[0]?.json?.deal_stage,\n  close_date: allResults[0]?.json?.close_date,\n  deal_value_usd: allResults[0]?.json?.deal_value_usd,\n  forecast_category: allResults[0]?.json?.forecast_category,\n  dimensions: grouped\n} }];\n"
+        "jsCode": "// Merge deal context from Postgres with trigger metadata\n// Guard: 30-minute cooldown for webhook triggers to prevent duplicate scoring\nconst triggerData = $('Code: Normalize Trigger').first().json;\nconst dealRow = $input.first().json;\n\nif (!dealRow.deal_id) {\n  return []; // deal not found — skip\n}\n\nif (dealRow.last_scored_at && triggerData.trigger_type === 'new_ingestion') {\n  const minutesSince = (Date.now() - new Date(dealRow.last_scored_at).getTime()) / 60000;\n  if (minutesSince < 30) {\n    return []; // cooldown — skip\n  }\n}\n\nreturn [{\n  json: {\n    deal_id: dealRow.deal_id,\n    company_name: dealRow.company_name,\n    deal_stage: dealRow.deal_stage || 'discover',\n    salesforce_stage: dealRow.salesforce_stage || '',\n    close_date: dealRow.close_date || null,\n    forecast_category: dealRow.forecast_category || 'pipeline',\n    last_scored_at: dealRow.last_scored_at || null,\n    last_total: dealRow.last_total !== null && dealRow.last_total !== undefined ? dealRow.last_total : null,\n    trigger_message_id: triggerData.trigger_message_id,\n    trigger_type: triggerData.trigger_type\n  }\n}];\n"
       },
-      "id": "aggregate-rag-results",
-      "name": "Code: Aggregate RAG Results",
+      "id": "7db9f97e-5678-4702-92c8-31973b9828ec",
+      "name": "Code: Merge Deal Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1160, 300],
-      "notes": "Groups all retrieved chunks by CPS dimension for the master scoring prompt."
+      "position": [
+        1120,
+        400
+      ]
     },
     {
       "parameters": {
-        "model": "claude-opus-4-6",
-        "messages": {
-          "values": [
+        "jsCode": "// Generate 15 targeted RAG queries — one per CPS dimension + supporting context areas.\n// Each uses Clearwater-specific language (DAP, PES, ES, Champion).\nconst deal = $input.first().json;\nconst co = deal.company_name;\n\nconst queries = [\n  { dimension: 'pain',         query: `What specific pain, urgent business problems, or compliance/cybersecurity challenges has ${co} articulated? What is driving urgency? What are the consequences of not acting? Has the Executive Sponsor agreed the pain is large enough to change?` },\n  { dimension: 'power',        query: `Who has budget authority and final decision-making power at ${co}? Has Austin met with the Executive Sponsor (ES) or Potential Executive Sponsor (PES)? Who is the Champion? Has an ES agreed to a Dual Action Plan (DAP)?` },\n  { dimension: 'vision',       query: `What future state vision of improved security and compliance has been co-created with ${co}? Has the ES agreed to a vision of improved future state? Is the ES painting this vision to others inside the organization?` },\n  { dimension: 'value',        query: `What financial terms, ROI, cost of the problem, or investment levels have been discussed with ${co}? Has finance or the Decision Maker agreed to financial terms? Has the ES shared ROI projections with the DM?` },\n  { dimension: 'change',       query: `What commitment to change has ${co} expressed? Has the Executive Sponsor acknowledged they must change? Has the ES convinced the ultimate Decision Maker (DM) that they must change? What board or leadership pressure exists? Are there any hard deadlines, contract renewals, vendor renewal conversations, MSP renewal timing, or external forcing functions that create urgency to make a decision by a specific date?` },\n  { dimension: 'control',      query: `What is the buying process at ${co}? Is there a Dual Action Plan (DAP) with agreed milestones and dates? Has the ES agreed to the DAP? What is the procurement, legal, or approval process?` },\n  { dimension: 'dap',          query: `What specific milestones, dates, and owners are in the action plan or DAP with ${co}? What steps have been completed and what remain open? Are there any gaps larger than 14 days between milestones? What is the next committed milestone date?` },\n  { dimension: 'stakeholders', query: `Who are all key stakeholders at ${co}? What are their titles, roles, and level of engagement? Who is the Champion, Potential Champion, PES, ES, and final Decision Maker? What are their individual goals and success criteria?` },\n  { dimension: 'current_state', query: `What is ${co}'s current cybersecurity and compliance posture? What security program, processes, tools, and gaps exist today? What assessments, audits, or incidents have been disclosed?` },\n  { dimension: 'future_state', query: `What future state does ${co} want to achieve? What are their compliance goals, desired capabilities, and success criteria? What organizational, process, or technology improvements are they seeking?` },\n  { dimension: 'risks',        query: `What are the key risks, objections, competitive threats, or obstacles in the ${co} deal? What could prevent or delay closing? Are there incumbent vendors, internal politics, or budget risks?` },\n  { dimension: 'next_steps',   query: `What are the specific next steps, action items, and follow-ups agreed with ${co}? What is Austin committed to delivering and by when? What has the prospect committed to? When is the next scheduled meeting?` },\n  { dimension: 'services',     query: `What Clearwater services, solutions, or engagement scope has been proposed or discussed with ${co}? What cybersecurity, risk, or compliance services are they interested in? What is the potential engagement size?` },\n  { dimension: 'call_summary', query: `What happened in the most recent call or meeting with ${co}? What were the key discussion points, decisions made, and outcomes?` },\n  { dimension: 'pe_sponsor',   query: `Who is the executive sponsor or PE/investor sponsor at ${co}? What is their level of support and commitment? Is there board-level or PE investor pressure driving this deal? Has Austin gained C-suite access?` }\n];\n\nreturn queries.map(q => ({\n  json: { ...deal, rag_query: q.query, rag_dimension: q.dimension }\n}));\n"
+      },
+      "id": "e9f4f0cc-8bd5-49ad-9ce1-4910543e22f2",
+      "name": "Code: Build RAG Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: $json.rag_query }) }}",
+        "options": {}
+      },
+      "id": "d99ce993-6251-4b12-93b7-f1677c50c3bd",
+      "name": "HTTP: Embed RAG Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1560,
+        400
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "0uPlAmGz2rZbF75R",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/deals/points/search",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ vector: $json.data[0].embedding, filter: { must: [{ key: 'deal_id', match: { value: $('Code: Build RAG Queries').item.json.deal_id } }] }, limit: 8, with_payload: true, with_vector: false }) }}",
+        "options": {}
+      },
+      "id": "bc90a4b5-21ab-411e-ae89-d6157f366b6c",
+      "name": "HTTP: Qdrant Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all 15 RAG query results and assemble into a structured context block.\n// HTTP Request nodes break pairedItem chains — match by index like CW-01.\nconst allSearchResults = $input.all();\nconst allQueryItems = $('Code: Build RAG Queries').all();\nconst dealData = $('Code: Merge Deal Context').first().json;\n\nconst dimensionChunks = {};\n\nallSearchResults.forEach((item, i) => {\n  const queryItem = allQueryItems[i] || allQueryItems[0];\n  const dimension = queryItem.json.rag_dimension;\n  const results = item.json.result || [];\n\n  const chunks = results\n    .filter(r => (r.score || 0) > 0.25)\n    .map(r => {\n      const p = r.payload || {};\n      const date = p.date_created ? new Date(p.date_created).toISOString().split('T')[0] : 'unknown date';\n      return `[${p.doc_type || 'document'}, ${date}]\\n${p.page_content || ''}`;\n    })\n    .join('\\n---\\n');\n\n  if (!dimensionChunks[dimension]) dimensionChunks[dimension] = [];\n  if (chunks) dimensionChunks[dimension].push(chunks);\n});\n\nconst contextBlock = Object.entries(dimensionChunks)\n  .map(([dim, chunks]) => `=== ${dim.toUpperCase()} EVIDENCE ===\\n${chunks.join('\\n---\\n') || '[No relevant content found]'}`)\n  .join('\\n\\n');\n\nreturn [{\n  json: {\n    ...dealData,\n    rag_context: contextBlock || 'No deal content has been ingested yet for this deal.',\n    context_dimensions: Object.keys(dimensionChunks)\n  }\n}];\n"
+      },
+      "id": "967654c0-6e17-40b2-9f07-f934ba8ffac2",
+      "name": "Code: Assemble RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull deal context from the RAG assembly node (not $input — which now has the services catalog rows)\nconst deal = $('Code: Assemble RAG Context').first().json;\n\nconst systemPrompt = `You are an expert Sales Intelligence Analyst for Austin Holland, a Sales Executive at Clearwater Security & Compliance. You hold the full institutional knowledge of a deal and your job is to score it with precision, produce all 22 deal artifacts, and write an internal team update that reflects the sophistication of someone who has been in enterprise sales for 20 years.\n\nCORE DIRECTIVES:\n- Score ONLY from the retrieved evidence. If no evidence exists for a dimension, score 0 and say so explicitly.\n- RECENCY RULE: When evidence conflicts across documents, the most recent document is ground truth. Always cite the date and doc_type of evidence relied on. Disregard older conflicting facts.\n- SCORE WHAT THE EVIDENCE SUPPORTS — not what you can prove with a literal confession. Use behavioral evidence, stated intent, roles, titles, and context to infer scores. A VP who owns the evaluation timeline and defines the problem IS functioning as a PES, even if he hasn't used that word.\n- DO NOT under-score to be safe. The rubric defines the ceiling for each score. If the evidence is consistent with a score, give it. The goal is accurate calibration, not conservatism.\n- URGENCY IS CHANGE EVIDENCE. An external deadline (contract renewal, audit cycle, board mandate) that creates real pressure to make a decision before that date is valid evidence for a higher Change score — even without an explicit PES commitment.\n- Use Clearwater CPS terminology precisely: PC, C, PES, ES, DM/UDM, DAP.\n- ANCHOR DATE: The anchor date is the date of the most recent document in the evidence.\n- DAP PROJECTION RULE: If DAP dates are not explicitly agreed upon in the evidence, project logical future dates starting from the anchor date using a standard sales cadence. Do not leave any DAP milestone dates blank.`;\n\nconst p2v2c2Rubric = `P2V2C2 SCORING RUBRIC — DEFINITIONS AND INTERPRETIVE GUIDANCE:\n\nPAIN (0-5):\n  0 = We have no knowledge of pain\n  1 = The PC has shared their situation\n  2 = The PC has admitted a pain\n  3 = The PC has indicated the pain of the PES [i.e., the Champion describes the organizational pain that reaches executive level]\n  4 = The PES has admitted a pain [a VP/exec-level stakeholder has articulated the pain themselves]\n  5 = The ES has agreed the pain is large enough to change\n  NOTE: A senior operational leader (VP, Director) using their own language to describe a structural governance failure IS a PES-level admission. Score accordingly.\n\nPOWER (0-5):\n  0 = We have no idea who is power\n  1 = We have an indication of a PES\n  2 = Our Champion has agreed to take us to the PES\n  3 = We have met with the PES [or: the senior leader we're engaging IS effectively the PES by role and behavior]\n  4 = The ES has agreed to the DAP\n  5 = The steps of the DAP are on schedule\n  NOTE: If the person we are engaging is a VP or senior director who owns the evaluation, defines the problem, and controls the timeline, they are functioning as a PES. Meeting with them = Power 3.\n\nVISION (0-5):\n  0 = We have no idea of their needs\n  1 = We have begun to define needs\n  2 = We have mapped our capabilities to their needs\n  3 = They have agreed to proof criteria [or: they have described a specific architecture/solution design]\n  4 = The ES has agreed to the vision of the improved future state\n  5 = The ES is painting the vision for others in the organization\n  NOTE: A client who describes a specific bifurcation model and names the exact services they want has exceeded \"mapped capabilities\" — that is proof-criteria-level specificity.\n\nVALUE (0-5):\n  0 = Benefits of our solution are unknown\n  1 = We believe their situation is causing them pain (financial cost implied by situation)\n  2 = We have defined the cost of their pain\n  3 = They believe our solution can address their pain\n  4 = The ES has shared the ROI/benefits of our solution with the DM\n  5 = The DM (finance/UDM) has agreed to the financial terms\n\nCHANGE (0-5):\n  0 = No one committed to change\n  1 = The PC is open to change\n  2 = The PC has confirmed the PES will meet with us\n  3 = The PES has agreed they need to change\n  4 = The ES has chosen Clearwater specifically [OR: urgency is created by a hard external deadline that creates real pressure to make a decision before that date]\n  5 = The ES has convinced the ultimate DM they must change\n\nCONTROL (0-5):\n  0 = The buying process is unknown\n  1 = The Champion has described the process as they know it\n  2 = We have met with a PES [first substantive executive meeting held]\n  3 = Pain admitted and a vision created for our ES\n  4 = The ES has agreed to the DAP\n  5 = The DAP is complete (all milestones executed)\n\nPE SPONSOR SCORE (0-5):\n  0 = No PE/board/investor pressure identified\n  1 = PE or board pressure mentioned but not confirmed as a driver\n  2 = PE or board pressure confirmed as a driver of this specific initiative\n  3 = Austin has met with a PE/board-level contact on this deal\n  4 = PE/board sponsor has engaged directly in the deal's progress\n  5 = PE/board sponsor is actively driving the deal alongside the ES`;\n\nconst casDefinitions = `CRITICAL ACTIVITY STAGE (CAS):\n  Discover: 1A=Pre-qualify | 1B=Identify Champion | 1C=Share Industry Trends Storyboard | 1D=Champion shares situation\n  Qualify:  2A=Validate Current State + Pain w/ Champion | 2B=Set expectations for proposal process | 2C=Gain access to power; validate pain + create vision w/ PES | 2D=Define buying process + Prepare DAP\n  Prove:    3A=Determine Proof Criteria + Co-Create Solution | 3B=Document Approach + schedule Validation Meeting | 3C=Validation Meeting: Present AD + validate Solution | 3D=Email AD w/ Pricing\n  Negotiate: 4A=Revise DAP w/ detailed close steps | 4B=Present MSA/SOW | 4C=Exchange redlines | 4D=Client commits to signature date\n  Close:    5A=Both parties agree to negotiated contract/terms\n\nSTAGE VERIFIABLE OUTCOMES:\n  Discover → PC Willing to Change | Qualify → PES Bought into DAP | Prove → ES Verbally Agreed to Business Proposal\n  Negotiate → Legal & Procurement Complete | Close → Contracts Signed\n\nCAS ASSIGNMENT RULE: The critical_activity_stage is the NEXT action that must happen to advance the deal — not what just occurred.\n\nDetermine CAS by asking: given everything I know about where this deal is, what is the one activity Austin needs to complete right now to move it forward? Then match that activity to the closest CAS label.\n\nThe stage label reflects the nature of the work, not a checklist. If the prospect has already articulated what a successful solution looks like — the services, the model, the scope, the demarcation of responsibilities — the deal is past discovery and qualification. The next step is to produce the Approach Document, which is 3B. A conversation where proof criteria emerge is a 3A event; the next CAS is 3B.\n\nDo not assign CAS based on what meeting type just occurred. Assign it based on what the deal needs next.`;\n\nconst dapStructure = `DAP — 14 STANDARD MILESTONES (in order):\n  1. Activity/Initial Contact\n  2. Initial Discovery Call\n  3. Define Current State & Desired Future State\n  4. Co-Create Session\n  5. Present Draft Approach Document\n  6. Present Updated Approach (based on feedback)\n  7. Go/No Go Decision\n  8. Submit for Budget Approval\n  9. Send MSA/SOW\n  10. Client Initial Review of MSA/SOW & Redlines\n  11. Call to Review Redlines\n  12. Finalize Redlines & Launch DocuSign\n  13. Execute Contract  ← THIS is the close_date\n  14. Initial Engagement Meeting / Project Start  ← post-close, after close_date\n  15. Final Report Delivered  ← post-close, TBD\n\nCLOSE DATE RULE: close_date = the date of milestone 13 (Execute Contract). Milestones 14 and 15 happen AFTER the close date and are not used to determine it.\n\nANCHOR DATE RULE:\n- The anchor date is the date of the most recent document ingested.\n- If the anchor date falls on a Saturday or Sunday, DO NOT use it to project forward. Instead, set dap_anchor_note = \"Weekend date detected — actual call date may differ. Austin should confirm.\" and project milestone dates as if the anchor were the following Monday.\n\nDEADLINE AWARENESS RULE:\n- Think of the DAP as the joint plan that gets the deal done. It should reflect the actual complexity and rhythm of the sales process — some steps take longer than others, and that reality should show in the dates.\n- If the evidence identifies a hard external deadline (MSP renewal, contract expiry, audit date, board review, PE mandate, fiscal year end): milestone 13 (Execute Contract) MUST be set to exactly that date. If that date falls on a weekend, use the last business day before it. This is not a suggestion — close_date equals the deadline date. Do not land a week early or project past it.\n- With that fixed endpoint in view, plan the milestones forward from today the way a seasoned AE would: allocate more time to steps that genuinely require it (client review, legal/procurement, co-creation), and less to steps that move fast (a quick call, a send). Let the natural pace of each step shape the spacing — the goal is a credible, pressured plan, not a uniform distribution.\n- If no hard deadline is identified in the evidence, project milestone 13 at the natural close pace for the deal's complexity and stage.\n\nBUSINESS DAY RULE: ALL projected milestone dates MUST fall on Monday through Friday. Never Saturday or Sunday.\n\nNATURAL CADENCE — space milestones like a real sales cycle:\n  - Calls and meetings (milestones 3, 4, 7, 11): prefer Tuesday, Wednesday, or Thursday\n  - Deliverable handoffs (milestones 5, 6, 9): prefer Monday or Friday\n  - Client review periods (milestones 10): allow 7-10 business days\n  - Legal/procurement steps (milestones 11, 12): allow 5-7 business days each\n  - Do NOT space all milestones exactly 7 days apart — vary spacing to reflect realistic activity durations\n\nDAP 14-DAY GAP RULE: Set dap_has_14_day_gap = true if any adjacent milestones are more than 14 calendar days apart.`;\n\n// Build dynamic services catalog from Postgres: Fetch Services Catalog results\nconst serviceRows = $('Postgres: Fetch Services Catalog').all();\nconst servicesCatalogList = serviceRows.length > 0\n  ? serviceRows.map(r => `  - ${r.json.service_slug}: ${r.json.service_name}${r.json.practice_area ? ' (' + r.json.practice_area + ')' : ''}`).join('\\n')\n  : '  - risk_analysis, managed_security_healthcare, technical_testing (catalog loading failed — use best judgment)';\n\nconst servicesTerminology = `CLEARWATER SERVICES (use exact names for services_narrative):\n  IRM|Analysis, IRM|Pro®, IRM|Security®, IRM|Privacy®, IRM|405(d) HICP, MDR (Managed Detection & Response, 24x7x365 SOC),\n  MSS (Managed Security Services / SOC operations), SIEM (Log Management), SCVA, ClearAdvantage®, ClearConfidence™,\n  CAPP, VRM, PPMS, vCISO/vCPO/vCCO, Technical Testing (Pen Testing, Vuln Scanning, Web App, Phishing/Social Engineering),\n  Risk Response & Remediation (Level 1/2/3)`;\n\nconst workstreamCatalog = `WORKSTREAM INFERENCE CATALOG (use these exact service_slug values):\n${servicesCatalogList}`;\n\nconst internalUpdateGuidance = `INTERNAL TEAM UPDATE — FORMAT AND TONE:\n  Write exactly TWO paragraphs of narrative prose. NO bullet points. NO section headers. NO ALL-CAPS labels.\n  \n  PARAGRAPH 1: Describe the current state of the deal — where it came from, the client's situation, who the key players are, what the tension or pain is, and any PE/board dynamic. Be specific about names and roles. Treat deal mechanics with serious, almost exaggerated reverence.\n  \n  PARAGRAPH 2: Describe the strategic trajectory — what the future state looks like, what Clearwater's role is, what the urgency or forcing function is, and what the winning strategy requires. Be inferential and forward-looking. Use subtle, dry sarcasm when describing corporate behaviors, delays, or client indecision. Be astute, eloquent, and professional.\n  \n  Tone reference: \"Velentium operates in a state of stable but fragile equilibrium, currently reliant on an incumbent provider for both operational support and compliance oversight. The dialogue reveals a critical structural tension — a 'fox guarding the hen house' scenario — where Travis recognizes the lack of independent governance required for long-term organizational resilience. This engagement is bolstered by PE-level air cover from Adam at GPP, who served as the strategic catalyst for the re-engagement.\"`;\n\nconst outputSchema = `Return ONLY valid JSON (no markdown, no code fences) with ALL of the following fields:\n{\n  \"salesforce_stage\": \"Created|Discover|Qualify|Prove|Negotiate|Close\",\n  \"deal_stage\": \"discover|qualify|prove|negotiate|close\",\n  \"critical_activity_stage\": \"e.g. 3B: Document Approach\",\n  \"forecast_category\": \"Omitted|Pipeline|Upside|Commit|Negotiate|Closed\",\n  \"close_date\": \"YYYY-MM-DD or null\",\n  \"pain_score\": 0,\n  \"pain_justification\": \"specific evidence citing exact score definition met\",\n  \"pain_evidence_source\": \"doc_type, YYYY-MM-DD\",\n  \"power_score\": 0,\n  \"power_justification\": \"...\",\n  \"power_evidence_source\": \"...\",\n  \"vision_score\": 0,\n  \"vision_justification\": \"...\",\n  \"vision_evidence_source\": \"...\",\n  \"value_score\": 0,\n  \"value_justification\": \"...\",\n  \"value_evidence_source\": \"...\",\n  \"change_score\": 0,\n  \"change_justification\": \"...\",\n  \"change_evidence_source\": \"...\",\n  \"control_score\": 0,\n  \"control_justification\": \"...\",\n  \"control_evidence_source\": \"...\",\n  \"pe_sponsor_score\": 0,\n  \"pe_sponsor_justification\": \"...\",\n  \"dap_exists\": false,\n  \"dap_agreed\": false,\n  \"dap_status\": \"Confirmed by client|Internal Draft\",\n  \"dap_milestones_complete\": 0,\n  \"dap_has_14_day_gap\": false,\n  \"dap_next_milestone\": \"string or null\",\n  \"dap_next_milestone_date\": \"YYYY-MM-DD or null\",\n  \"dap_timeline\": [{\"milestone\": \"...\", \"date\": \"YYYY-MM-DD\", \"status\": \"Complete|Planned|Projected\", \"owner\": \"Clearwater|Client|Both\"}],\n  \"dap_summary\": \"...\",\n  \"champion_name\": \"string or null\",\n  \"champion_title\": \"string or null\",\n  \"pes_name\": \"string or null — most senior stakeholder who has NOT yet chosen Clearwater\",\n  \"pes_title\": \"string or null\",\n  \"executive_sponsor_name\": \"string or null — ONLY populate if they have chosen Clearwater; otherwise null\",\n  \"executive_sponsor_title\": \"string or null\",\n  \"stakeholders\": [{\"name\": \"...\", \"title\": \"...\", \"email\": \"... or null\", \"cps_role\": \"PC|C|PES|ES|DM|UDM|PE_SPONSOR|OTHER\", \"directly_engaged\": true, \"role_evidence\": \"...\", \"success_criteria\": \"...\"}],\n  \"key_stakeholder_success_criteria\": \"TO THE BOARD: ...\\\\n[Name/Role]: ...\",\n  \"current_state_org\": \"TERSE. 1-2 sentences max. Salesforce field — no prose. e.g. 'Single incumbent MSP handles all IT and security/compliance. GPP portfolio company.'\",\n  \"current_state_activities\": \"TERSE. 1-2 sentences max. e.g. 'MSP provides L1/L2 support and basic projects. Recently achieved ISO 27001 certification via MSP-contracted consultant.'\",\n  \"current_state_technology\": \"TERSE. List key technologies only. e.g. 'Azure. Defender for Endpoint. Microsoft Sentinel (SIEM). Intune. M365.'\",\n  \"future_state_org\": \"TERSE. 1-2 sentences max. e.g. 'Bifurcated model: MSP retained for L1 support; Clearwater owns SOC and compliance.'\",\n  \"future_state_activities\": \"TERSE. 1-2 sentences max. e.g. 'Independent ISO 27001 maintenance; specialized security oversight separate from MSP operations.'\",\n  \"future_state_technology\": \"TERSE. 1-2 sentences max. e.g. 'Managed Azure security services (Sentinel/Defender/Intune) via Clearwater.'\",\n  \"risks\": [\"string\"],\n  \"next_step\": \"...\",\n  \"next_step_date\": \"YYYY-MM-DD or null\",\n  \"call_summary\": \"...\",\n  \"highlights\": [\"string\"],\n  \"action_items_prospect\": [\"string\"],\n  \"action_items_internal\": [\"string\"],\n  \"internal_actions\": [\"string\"],\n  \"services_narrative\": \"...\",\n  \"general_narrative\": \"...\",\n  \"internal_team_update\": \"Two paragraphs of narrative prose. No bullets. No headers. No ALL-CAPS labels.\",\n  \"key_objectives_strategic\": \"1-3 sentence summary of the client's strategic business goals, or null\",\n  \"key_objectives_security\": \"1-3 sentence summary of specific security outcomes they want, or null\",\n  \"key_objectives_compliance\": \"1-3 sentence summary of regulatory requirements (HIPAA, HITRUST, SOC2, etc.), or null\",\n  \"inferred_workstreams\": [\"service_slug_from_catalog\"],\n  \"delivery_staff_on_call\": [{\"name\": \"Full Name\", \"email\": \"firstname.lastname@clearwatersecurity.com or null\", \"role\": \"delivery\"}]\n}`;\n\nconst userMessage = `DEAL INFORMATION:\nCompany: ${deal.company_name}\nDeal ID: ${deal.deal_id}\nCurrent Stage: ${deal.deal_stage}\nSalesforce Stage: ${deal.salesforce_stage || 'Unknown'}\nClose Date: ${deal.close_date || 'Not set'}\nForecast Category: ${deal.forecast_category || 'Pipeline'}\n\nRETRIEVED EVIDENCE (from all ingested deal documents, grouped by dimension):\n${deal.rag_context}\n\n========================================\nCPS METHODOLOGY REFERENCE\n========================================\n\nKEY CLIENT ROLES:\n- PC (Potential Champion): Has shared their situation. Not yet committed to championing Clearwater.\n- C (Champion): Wants Clearwater to win. Provides access to power. Sells on Clearwater's behalf when not in the room.\n- PES (Potential Executive Sponsor): Has budget authority; provides access; has NOT yet chosen Clearwater. A senior leader who owns the problem and controls the evaluation IS functioning as a PES.\n- ES (Executive Sponsor): Has budget; can support ONLY ONE company; has chosen Clearwater.\n- UDM (Ultimate Decision Maker): Final authority, often defers to ES.\n- DAP (Dual Action Plan): Austin's internal planning tool that he builds and maintains throughout the deal. It is NOT something found in call transcripts — it is something Austin creates and updates. The DAP maps the remaining milestones to close the deal. It may or may not have been shared with the client (dap_agreed = true only if the client has explicitly confirmed it). Always project a DAP based on available evidence — every deal must have one.\n\n${p2v2c2Rubric}\n\n${casDefinitions}\n\n${dapStructure}\n\n${servicesTerminology}\n\n${internalUpdateGuidance}\n\n========================================\nKEY OBJECTIVES EXTRACTION\n========================================\nFrom the conversation evidence, identify the client's stated objectives across three categories:\n- Strategic objectives: business goals, transformation priorities, competitive pressures, board/PE mandates\n- Security objectives: specific security outcomes they want to achieve (e.g., 24x7 SOC coverage, independent pen testing, SIEM visibility)\n- Compliance objectives: regulatory requirements they must meet (HIPAA, HITRUST, SOC2, ISO 27001, NIST, etc.)\n\nReturn null for any category where no clear objective is stated in the evidence. Do not invent objectives not supported by the evidence.\n\n========================================\nWORKSTREAM INFERENCE\n========================================\nBased on the client's industry, pain points, and stated needs, identify which Clearwater service lines are likely relevant to this deal. Use ONLY the service_slug values from the catalog below.\n\n${workstreamCatalog}\n\nReturn as \\\"inferred_workstreams\\\": [\\\"service_slug_1\\\", \\\"service_slug_2\\\", ...]\nIf no workstreams can be inferred from the evidence, return an empty array.\n\n========================================\nDELIVERY STAFF DETECTION\n========================================\nList any Clearwater internal staff mentioned by name in the conversation evidence who appear to be involved in delivery (not sales). These are typically on calls where they are explaining technical methodology, scoping, or implementation — not Austin.\n\nKnown key delivery people: Jeremy Hughes (Security Engineering), Alan Gush (Technical Testing), Steve Akers (Managed Cloud/SOC), Brian McManamon (Managed Security), Heather Hanson (Cyber Resilience/BCP), Dawn Morgenstern (Privacy), Wes Morris (Program Leadership).\n\nEmail pattern: firstname.lastname@clearwatersecurity.com (e.g., jeremy.hughes@clearwatersecurity.com)\nFor Steve Akers: steve.akers@clearwatersecurity.com\n\nReturn as \\\"delivery_staff_on_call\\\": [{\\\"name\\\": \\\"Full Name\\\", \\\"email\\\": \\\"email or null\\\", \\\"role\\\": \\\"delivery\\\"}]\nIf no Clearwater delivery staff are detected in the evidence, return an empty array.\n\n${outputSchema}`;\n\nconst requestBody = {\n  model: 'claude-opus-4-6',\n  max_tokens: 8096,\n  system: systemPrompt,\n  messages: [{\n    role: 'user',\n    content: userMessage\n  }]\n};\n\nreturn [{\n  json: {\n    ...deal,\n    request_body: requestBody\n  }\n}];\n"
+      },
+      "id": "c2e4f810-3a5b-4d9c-8e7f-1b6a2c4d5e6f",
+      "name": "Code: Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2330,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "role": "user",
-              "content": "={{ \nconst d = $json;\nconst dims = d.dimensions || {};\nconst today = new Date().toISOString().split('T')[0];\n\nreturn `You are an expert sales analyst for Clearwater Security & Compliance, specializing in the Clearwater Performance Selling (CPS) methodology and the P2V2C2 deal qualification framework.\n\nClearwater sells cybersecurity, risk management, and compliance services to healthcare organizations.\n\nYou must analyze all retrieved deal evidence below and produce a COMPLETE deal health assessment in valid JSON. Use ONLY evidence from the retrieved content — never invent facts. If evidence is absent for a field, use null or an empty array.\n\n## DEAL INFO\nAccount: ${d.company_name}\nDeal ID: ${d.deal_id}\nSalesforce Stage: ${d.salesforce_stage || 'Unknown'}\nClose Date: ${d.close_date || 'TBD'}\nDeal Value: ${d.deal_value_usd ? '$' + d.deal_value_usd.toLocaleString() : 'Unknown'}\nForecast Category: ${d.forecast_category || 'Pipeline'}\nToday: ${today}\n\n## P2V2C2 SCORING GUIDE\nEach dimension scored 0-5:\n- Pain: 0=no pain known → 5=ES agreed pain large enough to change\n- Power: 0=no idea who power is → 5=DAP steps on schedule  \n- Vision: 0=no idea of needs → 5=ES painting vision to others in org\n- Value: 0=benefits unknown → 5=DM agreed to financial terms\n- Change: 0=no one committed → 5=ES convinced DM they must change\n- Control: 0=buying process unknown → 5=DAP complete\n\n## CPS SALES STAGES\n1=Discover, 2=Qualify, 3=Prove, 4=Negotiate, 5=Close\nCritical Activity Stages: 1A/1B/1C/1D, 2A/2B/2C/2D, 3A/3B/3C/3D, 4A/4B/4C, 5A/5B/5C/5D\n\n## RETRIEVED EVIDENCE BY DIMENSION\n\n${Object.entries(dims).map(([dim, data]) => {\n  return `### ${dim.toUpperCase()}\\nQuery: ${data.query}\\n\\nEvidence:\\n${data.retrieved_text || '[No evidence retrieved]'}\\n`;\n}).join('\\n---\\n')}\n\n## REQUIRED OUTPUT\nReturn ONLY this JSON structure (no markdown, no code fences, no preamble):\n\n{\n  \"account\": \"${d.company_name}\",\n  \"date\": \"${today}\",\n  \"salesforce_stage\": \"[Stage Name | Critical Activity e.g. Prove | 3B: Document Approach]\",\n  \"critical_activity_stage\": \"[e.g. 3B: Document Approach]\",\n  \"close_date\": \"[YYYY-MM-DD or TBD]\",\n  \"forecast_category\": \"[Pipeline|Upside|Commit]\",\n  \"deal_value_usd\": ${d.deal_value_usd || null},\n  \"p2v2c2\": {\n    \"pain\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"power\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"vision\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"value\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"change\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" },\n    \"control\": { \"score\": 0, \"justification\": \"...\", \"evidence_source\": \"[doc type + date]\" }\n  },\n  \"p2v2c2_total\": 0,\n  \"pe_sponsor_score\": 0,\n  \"pe_sponsor_justification\": \"...\",\n  \"dap\": {\n    \"exists\": false,\n    \"agreed\": false,\n    \"milestones_total\": 14,\n    \"milestones_complete\": 0,\n    \"has_14_day_gap\": false,\n    \"next_milestone\": \"...\",\n    \"next_milestone_date\": \"YYYY-MM-DD\",\n    \"summary\": \"...\"\n  },\n  \"current_state\": {\n    \"organization\": \"...\",\n    \"activities\": \"...\",\n    \"technology\": \"...\"\n  },\n  \"future_state\": {\n    \"organization\": \"...\",\n    \"activities\": \"...\",\n    \"technology\": \"...\"\n  },\n  \"champion_name\": \"...\",\n  \"executive_sponsor_name\": \"...\",\n  \"key_stakeholder_success_criteria\": \"...\",\n  \"risks\": [\"...\"],\n  \"next_step\": \"...\",\n  \"next_step_date\": \"YYYY-MM-DD\",\n  \"call_summary\": \"...\",\n  \"highlights\": [\"...\"],\n  \"action_items_prospect\": [\"...\"],\n  \"action_items_internal\": [\"...\"],\n  \"internal_actions\": [\"...\"],\n  \"services_narrative\": \"...\",\n  \"general_narrative\": \"...\",\n  \"internal_team_update\": \"[TWO PARAGRAPHS. No bullets. Analytical tone. Reference PE/Executive Sponsor air cover where applicable. Written as a mandate to the internal team. Example: 'The Acme Health engagement has reached an inflection point...' Second paragraph: specific recommended actions and priorities for the team.]\"\n}`;\n}}\n"
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
             }
           ]
         },
-        "options": {
-          "maxTokens": 4096
-        }
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.request_body) }}"
       },
-      "id": "claude-scorer",
-      "name": "Claude Opus: P2V2C2 Scorer",
-      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
-      "typeVersion": 1,
-      "position": [1380, 300],
+      "id": "101c4e48-8927-4caf-b23c-5c2be3cb03dd",
+      "name": "HTTP: Claude Opus Score Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2330,
+        400
+      ],
       "credentials": {
-        "anthropicApi": { "id": "anthropic-cred", "name": "Anthropic API" }
-      },
-      "notes": "Claude Opus 4.6 generates all 22 deal health artifacts from retrieved evidence. Uses Clearwater CPS language precisely."
+        "anthropicApi": {
+          "id": "6NnFWUY71nO8HiT2",
+          "name": "Anthropic account"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Parse Claude's JSON response and compute derived fields\nconst rawResponse = items[0].json.content || items[0].json.text || '{}';\nconst dealContext = $('Code: Aggregate RAG Results').first().json;\nconst triggerData = $('Webhook: Health Trigger').first()?.json?.body || {};\n\nlet scored;\ntry {\n  const cleaned = rawResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scored = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { error: 'Parse failed', raw: rawResponse.substring(0, 500) } }];\n}\n\n// Compute p2v2c2 total\nconst p = scored.p2v2c2 || {};\nscored.p2v2c2_total = (p.pain?.score || 0) + (p.power?.score || 0) + (p.vision?.score || 0) + \n                      (p.value?.score || 0) + (p.change?.score || 0) + (p.control?.score || 0);\n\n// Flatten for Postgres insert\nreturn [{ json: {\n  deal_id: dealContext.deal_id,\n  trigger_message_id: triggerData.trigger_message_id || null,\n  salesforce_stage: scored.salesforce_stage,\n  deal_stage: dealContext.deal_stage,\n  critical_activity_stage: scored.critical_activity_stage,\n  pain_score: p.pain?.score || 0,\n  pain_justification: p.pain?.justification || null,\n  pain_evidence_source: p.pain?.evidence_source || null,\n  power_score: p.power?.score || 0,\n  power_justification: p.power?.justification || null,\n  power_evidence_source: p.power?.evidence_source || null,\n  vision_score: p.vision?.score || 0,\n  vision_justification: p.vision?.justification || null,\n  vision_evidence_source: p.vision?.evidence_source || null,\n  value_score: p.value?.score || 0,\n  value_justification: p.value?.justification || null,\n  value_evidence_source: p.value?.evidence_source || null,\n  change_score: p.change?.score || 0,\n  change_justification: p.change?.justification || null,\n  change_evidence_source: p.change?.evidence_source || null,\n  control_score: p.control?.score || 0,\n  control_justification: p.control?.justification || null,\n  control_evidence_source: p.control?.evidence_source || null,\n  p2v2c2_total_computed: scored.p2v2c2_total,\n  pe_sponsor_score: scored.pe_sponsor_score || 0,\n  pe_sponsor_justification: scored.pe_sponsor_justification || null,\n  dap_exists: scored.dap?.exists || false,\n  dap_agreed: scored.dap?.agreed || false,\n  dap_milestones_complete: scored.dap?.milestones_complete || 0,\n  dap_has_14_day_gap: scored.dap?.has_14_day_gap || false,\n  dap_next_milestone: scored.dap?.next_milestone || null,\n  dap_next_milestone_date: scored.dap?.next_milestone_date || null,\n  dap_summary: scored.dap?.summary || null,\n  close_date: scored.close_date || null,\n  forecast_category: scored.forecast_category || 'Pipeline',\n  current_state_org: scored.current_state?.organization || null,\n  current_state_activities: scored.current_state?.activities || null,\n  current_state_technology: scored.current_state?.technology || null,\n  future_state_org: scored.future_state?.organization || null,\n  future_state_activities: scored.future_state?.activities || null,\n  future_state_technology: scored.future_state?.technology || null,\n  champion_name: scored.champion_name || null,\n  executive_sponsor_name: scored.executive_sponsor_name || null,\n  key_stakeholder_success_criteria: scored.key_stakeholder_success_criteria || null,\n  risks: scored.risks || [],\n  next_step: scored.next_step || null,\n  next_step_date: scored.next_step_date || null,\n  call_summary: scored.call_summary || null,\n  highlights: scored.highlights || [],\n  action_items_prospect: scored.action_items_prospect || [],\n  action_items_internal: scored.action_items_internal || [],\n  internal_actions: scored.internal_actions || [],\n  services_narrative: scored.services_narrative || null,\n  general_narrative: scored.general_narrative || null,\n  internal_team_update: scored.internal_team_update || null\n} }];\n"
+        "jsCode": "// Parse Claude's JSON scoring response and merge with deal metadata\nconst response = $input.first().json;\nconst rawText = response.content?.[0]?.text || response.text || '{}';\nconst dealData = $('Code: Assemble RAG Context').first().json;\n\nlet scores;\ntry {\n  const cleaned = rawText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scores = JSON.parse(cleaned);\n} catch(e) {\n  throw new Error('Failed to parse Claude scoring response: ' + e.message + '\\nRaw (first 500): ' + rawText.slice(0, 500));\n}\n\nfunction nullify(val) {\n  if (!val || val === 'null' || val === 'string or null' || val === 'YYYY-MM-DD or null' || val === 'e.g. 2A: Identify PES') return null;\n  return val;\n}\n\nconst currentTotal = (scores.pain_score || 0) + (scores.power_score || 0) +\n  (scores.vision_score || 0) + (scores.value_score || 0) +\n  (scores.change_score || 0) + (scores.control_score || 0);\n\nconst lastTotal = dealData.last_total;\nlet trendDirection = 'stable';\nlet scoreDelta = null;\nif (lastTotal !== null && lastTotal !== undefined) {\n  scoreDelta = currentTotal - lastTotal;\n  trendDirection = scoreDelta >= 2 ? 'improving' : scoreDelta <= -2 ? 'declining' : 'stable';\n}\n\nreturn [{\n  json: {\n    deal_id: dealData.deal_id,\n    company_name: dealData.company_name,\n    trigger_message_id: dealData.trigger_message_id,\n    salesforce_stage: scores.salesforce_stage || dealData.salesforce_stage || '',\n    deal_stage: scores.deal_stage || dealData.deal_stage || 'discover',\n    critical_activity_stage: nullify(scores.critical_activity_stage) || '',\n    close_date: nullify(scores.close_date) || dealData.close_date,\n    forecast_category: dealData.forecast_category || 'pipeline',\n    pain_score: scores.pain_score || 0,\n    pain_justification: scores.pain_justification || '',\n    pain_evidence_source: scores.pain_evidence_source || '',\n    power_score: scores.power_score || 0,\n    power_justification: scores.power_justification || '',\n    power_evidence_source: scores.power_evidence_source || '',\n    vision_score: scores.vision_score || 0,\n    vision_justification: scores.vision_justification || '',\n    vision_evidence_source: scores.vision_evidence_source || '',\n    value_score: scores.value_score || 0,\n    value_justification: scores.value_justification || '',\n    value_evidence_source: scores.value_evidence_source || '',\n    change_score: scores.change_score || 0,\n    change_justification: scores.change_justification || '',\n    change_evidence_source: scores.change_evidence_source || '',\n    control_score: scores.control_score || 0,\n    control_justification: scores.control_justification || '',\n    control_evidence_source: scores.control_evidence_source || '',\n    p2v2c2_total: currentTotal,\n    pe_sponsor_score: scores.pe_sponsor_score || 0,\n    pe_sponsor_justification: scores.pe_sponsor_justification || '',\n    dap_exists: scores.dap_exists || false,\n    dap_agreed: scores.dap_agreed || false,\n    dap_status: scores.dap_status || 'Internal Draft',\n    dap_milestones_complete: scores.dap_milestones_complete || 0,\n    dap_has_14_day_gap: scores.dap_has_14_day_gap || false,\n    dap_next_milestone: nullify(scores.dap_next_milestone),\n    dap_next_milestone_date: nullify(scores.dap_next_milestone_date),\n    dap_timeline: Array.isArray(scores.dap_timeline) ? scores.dap_timeline : [],\n    dap_summary: scores.dap_summary || '',\n    champion_name: nullify(scores.champion_name),\n    champion_title: nullify(scores.champion_title),\n    pes_name: nullify(scores.pes_name),\n    pes_title: nullify(scores.pes_title),\n    executive_sponsor_name: nullify(scores.executive_sponsor_name),\n    executive_sponsor_title: nullify(scores.executive_sponsor_title),\n    stakeholders: Array.isArray(scores.stakeholders) ? scores.stakeholders : [],\n    key_stakeholder_success_criteria: scores.key_stakeholder_success_criteria || '',\n    current_state_org: scores.current_state_org || '',\n    current_state_activities: scores.current_state_activities || '',\n    current_state_technology: scores.current_state_technology || '',\n    future_state_org: scores.future_state_org || '',\n    future_state_activities: scores.future_state_activities || '',\n    future_state_technology: scores.future_state_technology || '',\n    risks: Array.isArray(scores.risks) ? scores.risks : [],\n    next_step: scores.next_step || '',\n    next_step_date: nullify(scores.next_step_date),\n    call_summary: scores.call_summary || '',\n    highlights: Array.isArray(scores.highlights) ? scores.highlights : [],\n    action_items_prospect: Array.isArray(scores.action_items_prospect) ? scores.action_items_prospect : [],\n    action_items_internal: Array.isArray(scores.action_items_internal) ? scores.action_items_internal : [],\n    internal_actions: Array.isArray(scores.internal_actions) ? scores.internal_actions : [],\n    services_narrative: scores.services_narrative || '',\n    general_narrative: scores.general_narrative || '',\n    internal_team_update: scores.internal_team_update || '',\n    trend_direction: trendDirection,\n    score_vs_previous: scoreDelta,\n    key_objectives_strategic: nullify(scores.key_objectives_strategic),\n    key_objectives_security: nullify(scores.key_objectives_security),\n    key_objectives_compliance: nullify(scores.key_objectives_compliance),\n    inferred_workstreams: Array.isArray(scores.inferred_workstreams) ? scores.inferred_workstreams : [],\n    delivery_staff_on_call: Array.isArray(scores.delivery_staff_on_call) ? scores.delivery_staff_on_call : []\n  }\n}];\n"
       },
-      "id": "parse-scores",
-      "name": "Code: Parse & Flatten Scores",
+      "id": "b6a77018-0b3e-4b58-83f4-8b6595be18f3",
+      "name": "Code: Parse Scores",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1600, 300],
-      "notes": "Parses Claude JSON, computes totals, flattens all 22 artifacts for Postgres insert."
+      "position": [
+        2660,
+        400
+      ]
     },
     {
       "parameters": {
-        "operation": "insert",
-        "table": "deal_health",
-        "columns": "deal_id, trigger_message_id, salesforce_stage, deal_stage, critical_activity_stage, pain_score, pain_justification, pain_evidence_source, power_score, power_justification, power_evidence_source, vision_score, vision_justification, vision_evidence_source, value_score, value_justification, value_evidence_source, change_score, change_justification, change_evidence_source, control_score, control_justification, control_evidence_source, pe_sponsor_score, pe_sponsor_justification, dap_exists, dap_agreed, dap_milestones_complete, dap_has_14_day_gap, dap_next_milestone, dap_next_milestone_date, dap_summary, close_date, forecast_category, current_state_org, current_state_activities, current_state_technology, future_state_org, future_state_activities, future_state_technology, champion_name, executive_sponsor_name, key_stakeholder_success_criteria, risks, next_step, next_step_date, call_summary, highlights, action_items_prospect, action_items_internal, internal_actions, services_narrative, general_narrative, internal_team_update",
-        "additionalFields": {}
+        "jsCode": "\n// Build a parameterized INSERT SQL safely — avoids all quoting issues.\nconst d = $input.first().json;\n\n// Helper: SQL-safe string literal (single-quoted, escaped apostrophes)\nfunction sq(val) {\n  if (val === null || val === undefined || val === '') return 'NULL';\n  return \"'\" + String(val).replace(/'/g, \"''\") + \"'\";\n}\n\n// Helper: SQL-safe date\nfunction sd(val) {\n  if (!val) return 'NULL';\n  const s = String(val);\n  if (!/^\\d{4}-\\d{2}-\\d{2}/.test(s)) return 'NULL';\n  return \"'\" + s.substring(0, 10) + \"'::date\";\n}\n\n// Helper: SQL-safe integer\nfunction si(val) {\n  const n = parseInt(val, 10);\n  return isNaN(n) ? 'NULL' : String(n);\n}\n\n// Helper: SQL-safe boolean\nfunction sb(val) {\n  return val ? 'true' : 'false';\n}\n\n// Helper: SQL-safe text array\nfunction sa(arr) {\n  if (!Array.isArray(arr) || arr.length === 0) return 'NULL::text[]';\n  const escaped = arr.map(v => \"'\" + String(v).replace(/'/g, \"''\") + \"'\").join(',');\n  return `ARRAY[${escaped}]::text[]`;\n}\n\n// Helper: SQL-safe JSONB\nfunction sj(val) {\n  if (!val || (Array.isArray(val) && val.length === 0)) return 'NULL';\n  const s = JSON.stringify(val);\n  return \"'\" + s.replace(/'/g, \"''\") + \"'::jsonb\";\n}\n\nconst sql = `INSERT INTO deal_health (\n  deal_id, trigger_message_id,\n  salesforce_stage, deal_stage, critical_activity_stage, close_date, forecast_category,\n  pain_score, pain_justification, pain_evidence_source,\n  power_score, power_justification, power_evidence_source,\n  vision_score, vision_justification, vision_evidence_source,\n  value_score, value_justification, value_evidence_source,\n  change_score, change_justification, change_evidence_source,\n  control_score, control_justification, control_evidence_source,\n  pe_sponsor_score, pe_sponsor_justification,\n  dap_exists, dap_agreed, dap_status, dap_milestones_complete, dap_has_14_day_gap,\n  dap_next_milestone, dap_next_milestone_date, dap_timeline, dap_summary,\n  champion_name, champion_title, pes_name, pes_title, executive_sponsor_name, executive_sponsor_title,\n  key_stakeholder_success_criteria,\n  current_state_org, current_state_activities, current_state_technology,\n  future_state_org, future_state_activities, future_state_technology,\n  risks, next_step, next_step_date,\n  call_summary, highlights, action_items_prospect, action_items_internal,\n  internal_actions, services_narrative, general_narrative, internal_team_update,\n  trend_direction, score_vs_previous,\n  key_objectives_strategic, key_objectives_security, key_objectives_compliance,\n  inferred_workstreams, delivery_staff_on_call\n) VALUES (\n  ${sq(d.deal_id)},\n  ${sq(d.trigger_message_id)},\n  ${sq(d.salesforce_stage)}, ${sq(d.deal_stage)}, ${sq(d.critical_activity_stage)},\n  ${sd(d.close_date)},\n  ${sq(d.forecast_category)},\n  ${si(d.pain_score)}, ${sq(d.pain_justification)}, ${sq(d.pain_evidence_source)},\n  ${si(d.power_score)}, ${sq(d.power_justification)}, ${sq(d.power_evidence_source)},\n  ${si(d.vision_score)}, ${sq(d.vision_justification)}, ${sq(d.vision_evidence_source)},\n  ${si(d.value_score)}, ${sq(d.value_justification)}, ${sq(d.value_evidence_source)},\n  ${si(d.change_score)}, ${sq(d.change_justification)}, ${sq(d.change_evidence_source)},\n  ${si(d.control_score)}, ${sq(d.control_justification)}, ${sq(d.control_evidence_source)},\n  ${si(d.pe_sponsor_score)}, ${sq(d.pe_sponsor_justification)},\n  ${sb(d.dap_exists)}, ${sb(d.dap_agreed)}, ${sq(d.dap_status)},\n  ${si(d.dap_milestones_complete)}, ${sb(d.dap_has_14_day_gap)},\n  ${sq(d.dap_next_milestone)}, ${sd(d.dap_next_milestone_date)},\n  ${sj(d.dap_timeline)}, ${sq(d.dap_summary)},\n  ${sq(d.champion_name)}, ${sq(d.champion_title)},\n  ${sq(d.pes_name)}, ${sq(d.pes_title)},\n  ${sq(d.executive_sponsor_name)}, ${sq(d.executive_sponsor_title)},\n  ${sq(d.key_stakeholder_success_criteria)},\n  ${sq(d.current_state_org)}, ${sq(d.current_state_activities)}, ${sq(d.current_state_technology)},\n  ${sq(d.future_state_org)}, ${sq(d.future_state_activities)}, ${sq(d.future_state_technology)},\n  ${sa(d.risks)}, ${sq(d.next_step)}, ${sd(d.next_step_date)},\n  ${sq(d.call_summary)},\n  ${sa(d.highlights)},\n  ${sa(d.action_items_prospect)},\n  ${sa(d.action_items_internal)},\n  ${sa(d.internal_actions)},\n  ${sq(d.services_narrative)}, ${sq(d.general_narrative)}, ${sq(d.internal_team_update)},\n  ${sq(d.trend_direction)},\n  ${d.score_vs_previous !== null && d.score_vs_previous !== undefined ? si(d.score_vs_previous) : 'NULL'},\n  ${sq(d.key_objectives_strategic)}, ${sq(d.key_objectives_security)}, ${sq(d.key_objectives_compliance)},\n  ${sj(d.inferred_workstreams)}, ${sj(d.delivery_staff_on_call)}\n)`;\n\nreturn [{ json: { ...d, insert_sql: sql + ' RETURNING id' } }];\n"
       },
-      "id": "store-health-scores",
-      "name": "Postgres: Store Health Scores",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [1820, 300],
-      "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Inserts all 22 deal health artifacts into deal_health table. Historical record — never updates, always inserts."
-    },
-    {
-      "parameters": {
-        "operation": "update",
-        "table": "deals",
-        "updateKey": "deal_id",
-        "columns": "salesforce_stage, deal_stage, close_date, forecast_category, updated_at",
-        "additionalFields": {}
-      },
-      "id": "update-deal-record",
-      "name": "Postgres: Update Deal Record",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [2040, 300],
-      "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Updates the master deal record with latest stage, close date, and forecast from the scoring run."
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "query": "SELECT pain_score + power_score + vision_score + value_score + change_score + control_score as prev_total FROM deal_health WHERE deal_id = $1 AND scored_at < NOW() - INTERVAL '1 minute' ORDER BY scored_at DESC LIMIT 1",
-        "additionalFields": {
-          "queryParams": "={{ [$json.deal_id] }}"
-        }
-      },
-      "id": "get-prev-score",
-      "name": "Postgres: Get Previous Score",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [2260, 300],
-      "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
-      },
-      "notes": "Fetches previous score for trend direction computation."
-    },
-    {
-      "parameters": {
-        "jsCode": "const current = items[0].json;\nconst prevScore = $('Postgres: Get Previous Score').first()?.json?.prev_total;\nconst currentTotal = current.p2v2c2_total_computed || 0;\n\nlet trend = 'stable';\nif (prevScore !== undefined && prevScore !== null) {\n  const delta = currentTotal - prevScore;\n  if (delta > 1) trend = 'improving';\n  else if (delta < -1) trend = 'declining';\n}\n\nreturn [{ json: { \n  deal_id: current.deal_id, \n  trend_direction: trend,\n  score_vs_previous: prevScore !== null && prevScore !== undefined ? currentTotal - prevScore : 0,\n  current_total: currentTotal,\n  alert_needed: trend === 'declining' && currentTotal < 12\n} }];\n"
-      },
-      "id": "compute-trend",
-      "name": "Code: Compute Trend",
+      "id": "f1e2d3c4-b5a6-7890-cdef-123456789abc",
+      "name": "Code: Build Insert SQL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2480, 300],
-      "notes": "Computes trend direction (improving/stable/declining) and flags alerts for low-scoring declining deals."
+      "position": [
+        2770,
+        400
+      ]
     },
     {
       "parameters": {
-        "operation": "update",
-        "table": "deal_health",
-        "updateKey": "deal_id",
-        "columns": "trend_direction, score_vs_previous",
-        "additionalFields": {}
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_sql }}",
+        "options": {}
       },
-      "id": "update-trend",
-      "name": "Postgres: Update Trend",
+      "id": "94a7e02d-19d7-4f24-95be-c54224a6c702",
+      "name": "Postgres: Insert Deal Health",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
-      "position": [2700, 300],
+      "position": [
+        2990,
+        400
+      ],
       "credentials": {
-        "postgres": { "id": "postgres-cred", "name": "Clearwater Postgres" }
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
       }
     },
     {
       "parameters": {
         "conditions": {
-          "conditions": [{ "leftValue": "={{ $json.alert_needed }}", "rightValue": true, "operator": { "operation": "equals" } }]
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "declining-check",
+              "leftValue": "={{ $('Code: Parse Scores').first().json.trend_direction }}",
+              "rightValue": "declining",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
         }
       },
-      "id": "check-alert",
-      "name": "Alert Needed?",
+      "id": "e757e5b0-142d-47b3-8a18-2916378e089f",
+      "name": "Is Deal Declining?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2920, 300]
+      "position": [
+        3980,
+        400
+      ]
     },
     {
       "parameters": {
-        "sendTo": "={{ $env.AUSTIN_EMAIL }}",
-        "subject": "={{ '⚠️ Deal Alert: ' + $('Code: Aggregate RAG Results').first().json.company_name + ' score declining (' + $json.current_total + '/30)' }}",
-        "message": "={{ 'Your deal with ' + $('Code: Aggregate RAG Results').first().json.company_name + ' has a declining P2V2C2 score.\\n\\nCurrent score: ' + $json.current_total + '/30\\nPrevious score: ' + ($json.current_total - $json.score_vs_previous) + '/30\\nChange: ' + $json.score_vs_previous + '\\n\\nCheck the Metabase dashboard for full details: http://localhost:3000' }}",
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 512, messages: [{ role: 'user', content: 'Write a short, urgent deal alert for Austin Holland. No greeting. Get straight to the point.\\n\\nDeal: ' + $('Code: Parse Scores').first().json.company_name + '\\nP2V2C2 Total: ' + $('Code: Parse Scores').first().json.p2v2c2_total + '/30' + ($('Code: Parse Scores').first().json.score_vs_previous !== null ? ' (dropped ' + Math.abs($('Code: Parse Scores').first().json.score_vs_previous) + ' points)' : '') + '\\nStage: ' + $('Code: Parse Scores').first().json.deal_stage + '\\nPain: ' + $('Code: Parse Scores').first().json.pain_score + '/5, Power: ' + $('Code: Parse Scores').first().json.power_score + '/5, Vision: ' + $('Code: Parse Scores').first().json.vision_score + '/5, Value: ' + $('Code: Parse Scores').first().json.value_score + '/5, Change: ' + $('Code: Parse Scores').first().json.change_score + '/5, Control: ' + $('Code: Parse Scores').first().json.control_score + '/5\\nNext step: ' + ($('Code: Parse Scores').first().json.next_step || 'Unknown') + '\\n\\nWrite 3-4 sentences: what is declining, why it matters, and one specific recommended action using Clearwater CPS language.' }] }) }}"
+      },
+      "id": "9dcee522-4263-49ea-98f6-d800027345d3",
+      "name": "HTTP: Draft Declining Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        4200,
+        300
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "6NnFWUY71nO8HiT2",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "austin.holland@clearwatersecurity.com",
+        "subject": "=⚠️ Declining Deal: {{ $('Code: Parse Scores').first().json.company_name }} ({{ $('Code: Parse Scores').first().json.p2v2c2_total }}/30)",
+        "emailType": "text",
+        "message": "={{ $json.content?.[0]?.text || $json.text || 'Deal alert: ' + $('Code: Parse Scores').first().json.company_name + ' is declining.' }}",
         "options": {}
       },
-      "id": "send-alert",
-      "name": "Gmail: Send Decline Alert",
+      "id": "ee2a47a4-a8e0-4e59-bc35-0bc06198e864",
+      "name": "Gmail: Send Declining Alert",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2,
-      "position": [3140, 200],
-      "operation": "send",
+      "position": [
+        4420,
+        300
+      ],
       "credentials": {
-        "gmailOAuth2": { "id": "gmail-send-cred", "name": "Gmail Send" }
+        "gmailOAuth2": {
+          "id": "3MFqaWbGTKhRcnUF",
+          "name": "Gmail Ingestion Inbox"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build batch INSERT SQL for deal_stakeholders table\n// Input: result from Postgres: Insert Deal Health (has the new deal_health.id)\n// We also pull the stakeholders array from Code: Parse Scores\n\nconst insertResult = $input.first().json;\n// Postgres executeQuery returns rows array; first row has .id from RETURNING id\nconst scoringRunId = insertResult[0]?.id || insertResult?.id || null;\n\nconst parseScoresData = $('Code: Parse Scores').first().json;\nconst dealId = parseScoresData.deal_id;\nconst stakeholders = parseScoresData.stakeholders || [];\nconst scoredAt = new Date().toISOString();\n\nif (stakeholders.length === 0) {\n  // No stakeholders to upsert — pass through a no-op\n  return [{ json: { stakeholders_upserted: 0, scoring_run_id: scoringRunId } }];\n}\n\nfunction sq(v) {\n  if (v === null || v === undefined || v === '') return 'NULL';\n  return \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\nfunction sb(v) {\n  return v ? 'TRUE' : 'FALSE';\n}\n\n// Build VALUES list — one row per stakeholder\nconst rows = stakeholders.map(s => {\n  const name = s.name || '';\n  if (!name) return null;\n  return `(${sq(dealId)}, ${scoringRunId !== null ? scoringRunId : 'NULL'}, '${scoredAt}', ` +\n    `${sq(name)}, ${sq(s.title)}, ${sq(s.email)}, ${sq(s.company)}, ` +\n    `${sq(s.cps_role || 'OTHER')}, ${sq(s.role_evidence)}, ` +\n    `${sb(s.directly_engaged)}, ${sq(s.success_criteria)})`;\n}).filter(r => r !== null);\n\nif (rows.length === 0) {\n  return [{ json: { stakeholders_upserted: 0, scoring_run_id: scoringRunId } }];\n}\n\nconst sql = `INSERT INTO deal_stakeholders \n  (deal_id, scoring_run_id, scored_at, name, title, email, company, \n   cps_role, role_evidence, directly_engaged, success_criteria)\nVALUES ${rows.join(',\\n')}\nON CONFLICT DO NOTHING`;\n\nreturn [{ json: { stakeholder_sql: sql, stakeholders_upserted: rows.length, scoring_run_id: scoringRunId } }];\n"
       },
-      "notes": "Sends alert to Austin when a deal score is declining and below 12/30."
+      "id": "c3d4e5f6-a7b8-9012-cdef-345678901234",
+      "name": "Code: Build Stakeholder SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3210,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.stakeholder_sql || 'SELECT 1' }}",
+        "options": {}
+      },
+      "id": "d4e5f6a7-b8c9-0123-def0-456789012345",
+      "name": "Postgres: Upsert Stakeholders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3430,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT service_slug, service_name, practice_area, pricing_contact, delivery_lead FROM clearwater_services WHERE is_active = true ORDER BY practice_area, service_name",
+        "options": {}
+      },
+      "id": "cw02-ps01-0000-0000-000000000001",
+      "name": "Postgres: Fetch Services Catalog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2110,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/ad-tracker-trigger",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ deal_id: $('Code: Parse Scores').first().json.deal_id }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "cw02-at01-0000-0000-000000000002",
+      "name": "HTTP: Trigger AD Tracker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true,
+      "position": [
+        3650,
+        400
+      ]
+    },
+    {
+      "id": "2fa6278d-ccfc-49c1-9737-e82e1753d8a5",
+      "name": "Postgres: Check Doc Types",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1370,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT COUNT(*)::int AS total, SUM(CASE WHEN doc_type = 'calendar_invite' THEN 1 ELSE 0 END)::int AS calendar_count FROM ingestion_log WHERE deal_id = '{{ $json.deal_id }}'",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "jUGmEMHiDrqDOHRT",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "5eb04259-8a46-48e5-b854-fb94c638fdf6",
+      "name": "IF: Calendar Only?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "eed82c9f-2080-4c16-9540-a8d8939e2e94",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": "={{ $json.calendar_count }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c68e9492-4e73-4cf2-b20a-4a75dfd86c33",
+      "name": "Code: Insert Placeholder Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1870,
+        250
+      ],
+      "parameters": {
+        "jsCode": "// Insert a zero-score placeholder row for new deals with only calendar invite data\nconst dealData = $('Code: Merge Deal Context').first().json;\n\n// p2v2c2_total is a GENERATED ALWAYS column — do NOT include it in the INSERT\nconst sql = `INSERT INTO deal_health (\n  deal_id, scored_at, trigger_type,\n  pain_score, power_score, vision_score, value_score, change_score, control_score,\n  pe_sponsor_score,\n  salesforce_stage, critical_activity_stage, forecast_category,\n  general_narrative, trend_direction\n) VALUES (\n  '${dealData.deal_id}', NOW(), 'calendar_only',\n  0, 0, 0, 0, 0, 0,\n  0,\n  '${dealData.salesforce_stage || 'Discover'}', '1A', '${dealData.forecast_category || 'pipeline'}',\n  'New deal created from calendar invite. No scoring data available yet.',\n  'stable'\n) ON CONFLICT DO NOTHING\nRETURNING id`;\n\nreturn [{ json: { ...dealData, insert_sql: sql } }];"
+      }
     }
   ],
   "connections": {
-    "Webhook: Health Trigger": { "main": [[{ "node": "Postgres: Get Deal Context", "type": "main", "index": 0 }]] },
-    "Schedule: Nightly Rescore (8pm ET)": { "main": [[{ "node": "Postgres: Get Deal Context", "type": "main", "index": 0 }]] },
-    "Postgres: Get Deal Context": { "main": [[{ "node": "Code: Build P2V2C2 RAG Queries", "type": "main", "index": 0 }]] },
-    "Code: Build P2V2C2 RAG Queries": { "main": [[{ "node": "Qdrant: Retrieve per Dimension", "type": "main", "index": 0 }]] },
-    "Qdrant: Retrieve per Dimension": { "main": [[{ "node": "Code: Aggregate RAG Results", "type": "main", "index": 0 }]] },
-    "Code: Aggregate RAG Results": { "main": [[{ "node": "Claude Opus: P2V2C2 Scorer", "type": "main", "index": 0 }]] },
-    "Claude Opus: P2V2C2 Scorer": { "main": [[{ "node": "Code: Parse & Flatten Scores", "type": "main", "index": 0 }]] },
-    "Code: Parse & Flatten Scores": { "main": [[{ "node": "Postgres: Store Health Scores", "type": "main", "index": 0 }]] },
-    "Postgres: Store Health Scores": { "main": [[{ "node": "Postgres: Update Deal Record", "type": "main", "index": 0 }]] },
-    "Postgres: Update Deal Record": { "main": [[{ "node": "Postgres: Get Previous Score", "type": "main", "index": 0 }]] },
-    "Postgres: Get Previous Score": { "main": [[{ "node": "Code: Compute Trend", "type": "main", "index": 0 }]] },
-    "Code: Compute Trend": { "main": [[{ "node": "Postgres: Update Trend", "type": "main", "index": 0 }]] },
-    "Postgres: Update Trend": { "main": [[{ "node": "Alert Needed?", "type": "main", "index": 0 }]] },
-    "Alert Needed?": {
+    "Webhook: Deal Health Trigger": {
       "main": [
-        [{ "node": "Gmail: Send Decline Alert", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "Webhook: Respond 200",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code: Normalize Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: Nightly Rescore (9pm ET)": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get All Active Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get All Active Deals": {
+      "main": [
+        [
+          {
+            "node": "Code: Normalize Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Normalize Trigger": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Deal Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Deal Context": {
+      "main": [
+        [
+          {
+            "node": "Code: Merge Deal Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Merge Deal Context": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Check Doc Types",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build RAG Queries": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Embed RAG Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Embed RAG Query": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Qdrant Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Qdrant Search": {
+      "main": [
+        [
+          {
+            "node": "Code: Assemble RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Assemble RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Fetch Services Catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Fetch Services Catalog": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Claude Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Claude Opus Score Deal": {
+      "main": [
+        [
+          {
+            "node": "Code: Parse Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Parse Scores": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Insert SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert Deal Health": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Stakeholder SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Deal Declining?": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Draft Declining Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
+      ]
+    },
+    "HTTP: Draft Declining Alert": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Send Declining Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Claude Prompt": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Claude Opus Score Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Insert SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Stakeholder SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Stakeholders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Stakeholders": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Trigger AD Tracker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Trigger AD Tracker": {
+      "main": [
+        [
+          {
+            "node": "Is Deal Declining?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Check Doc Types": {
+      "main": [
+        [
+          {
+            "node": "IF: Calendar Only?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Calendar Only?": {
+      "main": [
+        [
+          {
+            "node": "Code: Insert Placeholder Health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: Build RAG Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Insert Placeholder Health": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
   },
-  "tags": [{ "name": "clearwater" }, { "name": "deal-health" }, { "name": "cps" }, { "name": "phase-2" }]
+  "staticData": null
 }

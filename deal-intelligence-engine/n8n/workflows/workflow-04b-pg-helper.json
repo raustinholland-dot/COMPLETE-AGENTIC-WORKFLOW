@@ -1,0 +1,87 @@
+{
+  "id": "XDTSkxxWtZUBDECT",
+  "name": "CW-04b: Chat PG Query Helper",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-pg-query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cw04b-0001-0000-0000-000000000001",
+      "name": "Webhook: PG Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "cw04b-0001-0000-0000-000000000001",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Route the incoming query type to a parameter set for the Postgres node\nconst body = $input.first().json.body || {};\nconst queryType = body.query_type || 'deal_health_all';\nconst dealId = body.deal_id || null;\n\n// Build SQL based on query_type\nlet sql;\n\nswitch (queryType) {\n  case 'deal_health_single':\n    if (!dealId) throw new Error('deal_health_single requires deal_id');\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.deal_owner,\n             d.is_active, d.updated_at,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.champion_title,\n             dh.executive_sponsor_name, dh.executive_sponsor_title,\n             dh.pe_sponsor_score, dh.pe_sponsor_justification,\n             dh.dap_exists, dh.dap_agreed, dh.dap_status,\n             dh.dap_milestones_complete, dh.dap_has_14_day_gap,\n             dh.dap_next_milestone, dh.dap_next_milestone_date, dh.dap_summary,\n             dh.current_state_org, dh.current_state_activities, dh.current_state_technology,\n             dh.future_state_org, dh.future_state_activities, dh.future_state_technology,\n             dh.key_stakeholder_success_criteria, dh.risks,\n             dh.next_step, dh.next_step_date,\n             dh.call_summary, dh.highlights,\n             dh.action_items_prospect, dh.action_items_internal, dh.internal_actions,\n             dh.services_narrative, dh.general_narrative, dh.internal_team_update,\n             dh.trend_direction, dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.deal_id = '${dealId}'\n           LIMIT 1`;\n    break;\n\n  case 'deal_health_all':\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.is_active,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.executive_sponsor_name,\n             dh.next_step, dh.next_step_date, dh.trend_direction,\n             dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           ORDER BY dh.p2v2c2_total DESC NULLS LAST`;\n    break;\n\n  case 'attribution_queue':\n    sql = `SELECT id, sender_email, sender_domain, subject, email_date,\n             ai_guess_deal_id, ai_guess_company, ai_confidence, doc_type, queued_at\n           FROM attribution_queue\n           WHERE resolution = 'pending'\n           ORDER BY queued_at ASC\n           LIMIT 20`;\n    break;\n\n  case 'outputs_log':\n    if (!dealId) throw new Error('outputs_log requires deal_id');\n    sql = `SELECT output_type, recipient_email, recipient_name, subject,\n             content_summary, sent_at, triggered_by\n           FROM outputs_log\n           WHERE deal_id = '${dealId}'\n           ORDER BY sent_at DESC\n           LIMIT 20`;\n    break;\n\n  case 'ingestion_log':\n    if (!dealId) throw new Error('ingestion_log requires deal_id');\n    sql = `SELECT doc_type, subject, sender_email, chunk_count, ingested_at\n           FROM ingestion_log\n           WHERE deal_id = '${dealId}'\n           ORDER BY ingested_at DESC\n           LIMIT 20`;\n    break;\n\n  case 'pipeline_summary':\n    sql = `SELECT d.deal_stage, d.forecast_category,\n             COUNT(*) AS deal_count,\n             SUM(d.deal_value_usd) AS total_value,\n             ROUND(AVG(dh.p2v2c2_total), 1) AS avg_p2v2c2,\n             COUNT(CASE WHEN dh.trend_direction = 'declining' THEN 1 END) AS declining_deals\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           GROUP BY d.deal_stage, d.forecast_category\n           ORDER BY d.deal_stage`;\n    break;\n\n  case 'confirm_attribution':\n    const msgId = body.message_id || null;\n    const resolvedDealId = body.resolved_deal_id || null;\n    const resolution = body.resolution || 'confirmed';\n    if (!msgId) throw new Error('confirm_attribution requires message_id');\n    sql = `UPDATE attribution_queue\n           SET resolution = '${resolution}',\n               resolved_deal_id = ${resolvedDealId ? `'${resolvedDealId}'` : 'NULL'},\n               resolved_at = NOW()\n           WHERE message_id = '${msgId}'\n           RETURNING id, message_id, resolution, resolved_deal_id`;\n    break;\n\n  default:\n    throw new Error(`Unknown query_type: ${queryType}`);\n}\n\nreturn [{ json: { query_type: queryType, sql, deal_id: dealId } }];\n"
+      },
+      "id": "cw04b-0002-0000-0000-000000000002",
+      "name": "Code: Route Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "cw04b-0003-0000-0000-000000000003",
+      "name": "Postgres: Execute Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all rows and return as a clean JSON array\nconst rows = $input.all().map(item => item.json);\nconst queryType = $('Code: Route Query').first().json.query_type;\n\nreturn [{\n  json: {\n    query_type: queryType,\n    row_count: rows.length,\n    rows\n  }\n}];\n"
+      },
+      "id": "cw04b-0004-0000-0000-000000000004",
+      "name": "Code: Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "cw04b-0005-0000-0000-000000000005",
+      "name": "Webhook: Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: PG Query": {
+      "main": [[{"node": "Code: Route Query", "type": "main", "index": 0}]]
+    },
+    "Code: Route Query": {
+      "main": [[{"node": "Postgres: Execute Query", "type": "main", "index": 0}]]
+    },
+    "Postgres: Execute Query": {
+      "main": [[{"node": "Code: Format Response", "type": "main", "index": 0}]]
+    },
+    "Code: Format Response": {
+      "main": [[{"node": "Webhook: Respond", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

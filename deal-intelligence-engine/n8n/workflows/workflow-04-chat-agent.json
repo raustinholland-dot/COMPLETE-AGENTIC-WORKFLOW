@@ -1,0 +1,409 @@
+{
+  "id": "ZS64jSadlOIPrert",
+  "name": "CW-04: Q&A Chat Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "options": {}
+      },
+      "id": "cw04a-0001-0000-0000-000000000001",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "webhookId": "cw04a-0001-0000-0000-000000000001",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "auto",
+        "systemMessage": "You are the Clearwater Deal Intelligence Assistant — an AI analyst working exclusively for Austin Holland, Account Executive at Clearwater Security & Compliance.\n\nClearwater sells cybersecurity, risk management, and compliance services (IRM|Analysis, IRM|Pro®, IRM|Security®, IRM|Privacy®, MDR, MSS, SIEM, vCISO, Technical Testing) to healthcare organizations.\n\n## YOUR IDENTITY\nYou have deep knowledge of Clearwater's CPS (Clearwater Performance Selling) methodology, specifically the P2V2C2 framework. You speak Austin's language: Champion, PES, ES, DM, DAP, Critical Activity Stage.\n\n## TOOLS AVAILABLE\n\n1. **search_deal_rag** — Search actual deal documents (emails, transcripts, PDFs) for a specific deal using semantic search. Use when Austin asks about what was SAID or DISCUSSED in a deal. Input: {deal_id, query}\n\n2. **get_deal_health** — Retrieve structured P2V2C2 scores, stage, DAP status, stakeholders, and all 22 artifacts for one deal or all active deals. Input: {query_type: 'deal_health_single'|'deal_health_all', deal_id: string|null}\n\n3. **search_pipeline** — Query pipeline-level data: which deals are declining, stuck in a stage, below a score threshold, or sorted by health. Input: {query_type: 'deal_health_all'|'pipeline_summary'}\n\n4. **get_attribution_queue** — Get emails awaiting deal attribution confirmation. ALWAYS call this at the start of a fresh conversation to surface pending items. To confirm an attribution, pass action='confirm_attribution' with message_id, resolved_deal_id, and resolution.\n\n5. **generate_output** — Generate a draft output (follow-up email, pre-call planner, internal update, etc.) for a deal. Returns a draft for Austin to review before sending. ALWAYS use this tool when Austin asks you to draft, write, or generate any output. NEVER auto-send — always preview first. Input: {deal_id, output_type, recipient_email, recipient_name, instructions}\n\n6. **approve_output** — Approve and send a previously generated draft. Call this only after Austin has reviewed the draft and confirmed he wants to send it. Optionally accepts final_body if Austin edited the draft in chat. Input: {draft_id, final_body (optional)}\n\n## BEHAVIOR RULES\n\n**Session Start:** At the start of each NEW conversation (first message), run BOTH of these checks in parallel:\n1. Call get_attribution_queue (query_type='attribution_queue', action='list_pending') — surface any unmatched emails\n2. Call get_deal_health (query_type='pending_drafts') — this runs: SELECT ol.id, ol.deal_id, d.company_name, ol.output_type, ol.triggered_by, ol.created_at FROM outputs_log ol JOIN deals d ON d.deal_id = ol.deal_id WHERE ol.status = 'draft' ORDER BY ol.created_at ASC\n\nIf pending DRAFTS exist, open with:\n\"You have [N] draft(s) waiting for your review:\n1. [company_name] — [output_type] (queued [X] hours ago, triggered by: [triggered_by])\n2. ...\nWhich would you like to review first?\"\n\nIf pending ATTRIBUTION emails also exist, add: \"Also, [N] email(s) awaiting deal attribution.\"\n\nIf NEITHER, proceed normally with Austin's first message.\n\n**Deal-Scoped vs. Cross-Deal:**\n- If Austin mentions a specific company/deal → use search_deal_rag + get_deal_health with that deal_id\n- If Austin asks pipeline questions (\"which deals\", \"how many\", \"compare\") → use search_pipeline\n- If Austin asks about documents/transcripts/what was said → always use search_deal_rag\n\n**Output Generation (CRITICAL):**\n- When Austin asks to draft/write/generate ANY output → call generate_output with preview_mode implicitly set to true\n- After the tool returns, display the full draft to Austin in chat: show the subject line, then the full body\n- Ask: \"Want me to send this, or would you like to make any changes?\"\n- If Austin says \"looks good\" / \"send it\" / confirms → call approve_output with the draft_id\n- If Austin wants edits → make the edits in-context (do NOT call generate_output again), show the revised draft, ask for confirmation again\n- When Austin confirms the edited version → call approve_output with draft_id AND the final_body (the edited text)\n- NEVER call Gmail or send anything directly — always go through generate_output → review → approve_output\n\n**Deal ID Format:** deal_ids are snake_case slugs like cw_velentium_2026, cw_acmehospital_2025. If Austin mentions a company name, infer the deal_id or use get_deal_health with query_type='deal_health_all' to find it.\n\n**Response Style:**\n- Concise, direct, analyst-quality answers\n- Always cite the source (doc type + date) when referencing deal content from RAG\n- Use P2V2C2 scores as context when answering deal questions\n- Format deal health data as clean tables when appropriate\n- Never fabricate — if evidence isn't in the tools, say so\n- Dry wit is welcome. Corporate jargon is not.\n\n**Attribution Confirmation:**\nWhen Austin confirms an attribution (\"assign that to Velentium\", \"yes that's Acme\"), call get_attribution_queue with action='confirm_attribution' and the appropriate resolution data."
+      },
+      "id": "cw04a-0002-0000-0000-000000000002",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "claude-sonnet-4-6"
+        },
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.3
+        }
+      },
+      "id": "cw04a-0003-0000-0000-000000000003",
+      "name": "Claude Sonnet 4.6",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [560, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "6NnFWUY71nO8HiT2",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "fromInput",
+        "sessionTTL": 86400
+      },
+      "id": "cw04a-0004-0000-0000-000000000004",
+      "name": "Redis Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [760, 520],
+      "credentials": {
+        "redis": {
+          "id": "1YPU5fME2rB1cl7x",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Search actual deal documents (emails, call transcripts, PDFs) for a specific deal using semantic similarity. Use when Austin asks what was said, discussed, or agreed in a specific deal. Returns relevant passages with source doc type and date.",
+        "source": "database",
+        "workflowId": {
+          "value": "jbcDZOmO5cjqXPhx",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+            "query": "={{ $fromAI('query', 'The search query — what topic or question to find evidence for', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0005-0000-0000-000000000005",
+      "name": "Tool: search_deal_rag",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 100]
+    },
+    {
+      "parameters": {
+        "description": "Get structured P2V2C2 scores, stage, DAP status, stakeholders, and deal artifacts. Use query_type='deal_health_single' with a deal_id for one deal, or 'deal_health_all' for the full pipeline overview.",
+        "source": "database",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Either 'deal_health_single' for one deal or 'deal_health_all' for all active deals\", 'string') }}",
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug e.g. cw_velentium_2026. Required for deal_health_single. Omit for deal_health_all.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0006-0000-0000-000000000006",
+      "name": "Tool: get_deal_health",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 280]
+    },
+    {
+      "parameters": {
+        "description": "Search or summarize the full deal pipeline. Use for cross-deal questions like 'which deals are declining', 'what deals are in Qualify stage', or 'pipeline overview'. query_type 'deal_health_all' returns all deals with scores, 'pipeline_summary' returns aggregated counts by stage.",
+        "source": "database",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Either 'deal_health_all' for full deal list with scores, or 'pipeline_summary' for stage aggregates\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0007-0000-0000-000000000007",
+      "name": "Tool: search_pipeline",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 460]
+    },
+    {
+      "parameters": {
+        "description": "Get emails waiting for deal attribution confirmation. Call at the start of every new chat session to surface unmatched emails. To confirm an attribution, pass action='confirm_attribution' with message_id, resolved_deal_id, and resolution ('confirmed'/'rejected'/'new_deal').",
+        "source": "database",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Always 'attribution_queue'\", 'string') }}",
+            "action": "={{ $fromAI('action', \"Either 'list_pending' to see queue, or 'confirm_attribution' to resolve an item\", 'string') }}",
+            "message_id": "={{ $fromAI('message_id', 'The message_id to resolve. Only needed for confirm_attribution.', 'string') }}",
+            "resolved_deal_id": "={{ $fromAI('resolved_deal_id', 'The deal_id to assign this email to. Only needed for confirm_attribution.', 'string') }}",
+            "resolution": "={{ $fromAI('resolution', \"The outcome: confirmed, rejected, or new_deal. Only needed for confirm_attribution.\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_deal_id",
+              "displayName": "resolved_deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolution",
+              "displayName": "resolution",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0008-0000-0000-000000000008",
+      "name": "Tool: get_attribution_queue",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 640]
+    },
+    {
+      "parameters": {
+        "description": "Generate a DRAFT output (follow-up email, pre-call planner, internal update, circle_back, meeting_confirm, approach_pdf) for a specific deal. Returns the full draft for Austin to review BEFORE it is sent. Always use this tool when Austin asks to draft or write any output — never skip the preview step.",
+        "source": "database",
+        "workflowId": {
+          "value": "EgvOayROY8WHgSIW",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+            "output_type": "={{ $fromAI('output_type', \"Output type: follow_up_email | pre_call_planner | internal_team_update | circle_back | meeting_confirm | approach_pdf\", 'string') }}",
+            "recipient_email": "={{ $fromAI('recipient_email', 'Email address of the intended recipient (external contact or internal). Use austin.holland@clearwatersecurity.com for internal outputs.', 'string') }}",
+            "recipient_name": "={{ $fromAI('recipient_name', 'Full name of the intended recipient', 'string') }}",
+            "instructions": "={{ $fromAI('instructions', 'Specific instructions or context from Austin for this output, e.g. focus topics, tone adjustments, specific asks', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "output_type",
+              "displayName": "output_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recipient_email",
+              "displayName": "recipient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recipient_name",
+              "displayName": "recipient_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instructions",
+              "displayName": "instructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0009-0000-0000-000000000009",
+      "name": "Tool: generate_output",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 820]
+    },
+    {
+      "parameters": {
+        "description": "Approve and send a previously generated draft output. Call this ONLY after Austin has reviewed the draft and explicitly confirmed he wants to send it. Optionally pass final_body if Austin edited the draft text in chat (pass the complete edited body text). Returns confirmation with sent status.",
+        "source": "database",
+        "workflowId": {
+          "value": "KE681WckpVAKhiV3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "draft_id": "={{ $fromAI('draft_id', 'The numeric ID of the draft to approve, returned by generate_output', 'string') }}",
+            "final_body": "={{ $fromAI('final_body', 'The final edited body text if Austin made changes in chat. Omit (leave empty) if no edits were made and the original draft should be sent as-is.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "draft_id",
+              "displayName": "draft_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_body",
+              "displayName": "final_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0010-0000-0000-000000000010",
+      "name": "Tool: approve_output",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [960, 1000]
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [[{"node": "AI Agent", "type": "main", "index": 0}]]
+    },
+    "Claude Sonnet 4.6": {
+      "ai_languageModel": [[{"node": "AI Agent", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [[{"node": "AI Agent", "type": "ai_memory", "index": 0}]]
+    },
+    "Tool: search_deal_rag": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Tool: get_deal_health": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Tool: search_pipeline": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Tool: get_attribution_queue": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Tool: generate_output": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Tool: approve_output": {
+      "ai_tool": [[{"node": "AI Agent", "type": "ai_tool", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

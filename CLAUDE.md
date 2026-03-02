@@ -206,6 +206,11 @@ This dramatically improves RAG retrieval precision (Anthropic Contextual Retriev
 - **High/medium** → auto-assign to matching deal in `deals` table by sender domain or company name
 - **Low** → insert to `attribution_queue`; surfaced to Austin via chat widget for confirmation
 
+### New Deal Shell Opportunity (Calendar-Only)
+When a calendar invite arrives from a domain not in the `deals` table, CW-01 automatically creates a new deal record at Discover stage. CW-02 then fires but detects (via `Postgres: Check Doc Types`) that the deal's only ingestion record is a `calendar_invite`. It takes the `IF: Calendar Only?` true branch and inserts a **zero-score placeholder** `deal_health` row (`trigger_type = 'calendar_only'`, `critical_activity_stage = '1A'`, `general_narrative = 'New deal created from calendar invite. No scoring data available yet.'`). This is **correct expected behavior** — not an error. The deal will score naturally as transcripts, emails, and other artifacts are ingested.
+
+The placeholder skips the full RAG/Opus pipeline, stakeholder upsert, AD Tracker trigger, and declining alert — all correct for a shell deal with no substantive content.
+
 ### Append-Only Health History
 The `deal_health` table **never updates** existing rows — always inserts a new row per scoring run. This preserves the full audit trail of P2V2C2 scores over time for trend analysis.
 
