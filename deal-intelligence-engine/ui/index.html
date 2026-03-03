@@ -336,12 +336,13 @@ body {
   font-size:13px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   outline:none;
-  resize:vertical;
+  resize:none;
   line-height:1.6;
 }
 .draft-field input:focus,
 .draft-field textarea:focus { border-color:var(--accent); }
-.draft-field textarea { min-height:260px; }
+.draft-field.body-field { flex:1; display:flex; flex-direction:column; min-height:0; }
+.draft-field.body-field textarea { flex:1; min-height:0; }
 
 .draft-actions {
   padding:10px 14px;
@@ -468,7 +469,7 @@ body {
         <label>Subject</label>
         <input type="text" id="draftSubject" placeholder="Subject line">
       </div>
-      <div class="draft-field">
+      <div class="draft-field body-field">
         <label>Body</label>
         <textarea id="draftBodyText" placeholder="Draft body text…"></textarea>
       </div>
@@ -490,6 +491,7 @@ const CHAT_WEBHOOK = `${N8N}/webhook/cw04a-0001-0000-0000-000000000001/chat`;
 const GET_DEALS    = `${N8N}/webhook/get-deals`;
 const GET_CONTEXT  = `${N8N}/webhook/get-deal-context`;
 const APPROVE_URL  = `${N8N}/webhook/output-approve`;
+const GET_DRAFT    = `${N8N}/webhook/get-draft`;
 
 // ── State ────────────────────────────────────────────────────────────
 let currentDealId   = null;
@@ -512,6 +514,7 @@ async function loadDeals() {
     const deals = data.deals || [];
     const sel = document.getElementById('dealSelect');
     sel.innerHTML = `<option value="">— Select a deal —</option>` +
+      `<option value="__pipeline__">Pipeline (All Deals)</option>` +
       deals.map(d => `<option value="${d.deal_id}">${d.company_name} (${capitalize(d.deal_stage)})</option>`).join('');
   } catch(e) {
     document.getElementById('dealSelect').innerHTML = `<option value="">Error loading deals</option>`;
@@ -522,17 +525,28 @@ async function loadDeals() {
 // ── Select deal ───────────────────────────────────────────────────────
 async function selectDeal(dealId) {
   if (!dealId) return;
-  currentDealId = dealId;
-  currentSessionId = `deal_room_${dealId}_${Date.now()}`;
   currentDraftId = null;
   clearDraft();
   clearChat();
 
-  // Show loading state
-  document.getElementById('leftPanel').innerHTML = `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:40px">Loading…</div>`;
   document.getElementById('casBadge').style.display = 'none';
   document.getElementById('scoreBadge').style.display = 'none';
   document.getElementById('topbarMeta').textContent = '';
+
+  // ── Pipeline (global) mode ──
+  if (dealId === '__pipeline__') {
+    currentDealId = null;
+    currentSessionId = `pipeline_${Date.now()}`;
+    document.getElementById('leftPanel').innerHTML = `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:40px;line-height:1.8">Pipeline mode<br>Ask about any deal<br>or your full pipeline</div>`;
+    document.getElementById('sendBtn').disabled = false;
+    appendAgentMessage('Pipeline mode — ask me about any deal, what needs attention, or your full pipeline.');
+    return;
+  }
+
+  // ── Deal detail mode ──
+  currentDealId = dealId;
+  currentSessionId = `deal_room_${dealId}_${Date.now()}`;
+  document.getElementById('leftPanel').innerHTML = `<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:40px">Loading…</div>`;
 
   try {
     const res = await fetch(`${GET_CONTEXT}?deal_id=${encodeURIComponent(dealId)}`);
@@ -541,7 +555,6 @@ async function selectDeal(dealId) {
     renderTopBar(ctx);
     document.getElementById('sendBtn').disabled = false;
 
-    // Auto-open with pending drafts check
     appendAgentMessage('📋 Checking for pending drafts and pipeline status…');
     await sendToChat('📋 Show pending drafts');
   } catch(e) {
@@ -745,8 +758,8 @@ async function sendToChat(text) {
     });
     const data = await res.json();
     const output = data.output || data.text || data.message || JSON.stringify(data);
-    appendAgentMessage(output);
-    tryExtractDraft(output, data);
+    const draftLoaded = tryExtractDraft(output, data);
+    appendAgentMessage(output, draftLoaded);
   } catch(e) {
     appendAgentMessage('Error: Could not reach n8n. Check that the chat workflow is active.');
     console.error(e);
@@ -764,7 +777,7 @@ function appendUserMessage(text) {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-function appendAgentMessage(text) {
+function appendAgentMessage(text, showDraftTag) {
   const msgs = document.getElementById('chatMessages');
   // Remove typing indicator if present
   const typing = msgs.querySelector('.typing');
@@ -773,9 +786,7 @@ function appendAgentMessage(text) {
   const el = document.createElement('div');
   el.className = 'msg';
 
-  // Detect if text contains a draft marker
-  const hasDraft = /draft\s*(id|#)\s*:?\s*(\d+)/i.test(text) || /draft_id\s*:\s*(\d+)/i.test(text);
-  const draftTag = hasDraft
+  const draftTag = showDraftTag
     ? `<div class="draft-tag" onclick="scrollToDraft()">✦ Draft loaded in editor →</div>`
     : '';
 
@@ -798,34 +809,42 @@ function clearChat() {
 }
 
 // ── Draft extraction ──────────────────────────────────────────────────
+// Returns true synchronously if a draft ID was found (fetch happens async)
 function tryExtractDraft(text, data) {
-  // Try structured response first (if CW-04e returns draft fields)
+  // Structured response first (CW-04e returns draft fields directly)
   if (data.draft_id && (data.subject || data.body)) {
     loadDraft(data.draft_id, data.subject || '', data.body || '', data.recipient_name || '', data.output_type || '');
-    return;
+    return true;
   }
 
-  // Parse from agent text
-  // Pattern: "Draft ID: 123" or "Draft #123" then "Subject: ..." then body
-  const idMatch = text.match(/draft\s*(?:id|#)\s*:?\s*(\d+)/i);
-  const subjectMatch = text.match(/\*?\*?subject\*?\*?\s*:[ \t]*(.+)/i);
+  // Detect draft ID in agent text
+  // Patterns: "Draft 19", "Draft ID: 19", "Draft #19", "Draft 2 (ID: 19)"
+  const idMatch = text.match(/draft\s*(?:\d+\s*)?\(\s*(?:id|#)\s*:?\s*(\d+)\s*\)/i)
+                || text.match(/draft\s*(?:id|#)\s*:?\s*(\d+)/i)
+                || text.match(/\bdraft\s+(\d+)\b/i);
 
   if (idMatch) {
     const draftId = idMatch[1];
-    const subject = subjectMatch ? subjectMatch[1].trim().replace(/\*+/g,'') : '';
+    // Skip if we already have this draft loaded
+    if (String(currentDraftId) === String(draftId)) return false;
+    // Fetch clean content directly from DB via CW-08
+    fetchDraftById(draftId);
+    return true;
+  }
 
-    // Extract body — everything after "Subject: ..." up to end or a separator
-    let body = '';
-    const subjectIdx = subjectMatch ? text.indexOf(subjectMatch[0]) : -1;
-    if (subjectIdx !== -1) {
-      const afterSubject = text.slice(subjectIdx + subjectMatch[0].length).trim();
-      // Strip leading newline and any "Body:" prefix
-      body = afterSubject.replace(/^\*?\*?body\*?\*?\s*:\s*/i, '').trim();
-    }
+  return false;
+}
 
-    if (subject || body) {
-      loadDraft(draftId, subject, body, '', '');
+// Fetch draft from Postgres via CW-08 and load into right panel
+async function fetchDraftById(draftId) {
+  try {
+    const res = await fetch(`${GET_DRAFT}?id=${encodeURIComponent(draftId)}`);
+    const d = await res.json();
+    if (d.id) {
+      loadDraft(d.id, d.subject || '', d.body || '', d.recipient_name || '', d.output_type || '');
     }
+  } catch(e) {
+    console.error('CW-08 fetch failed:', e);
   }
 }
 
@@ -929,7 +948,7 @@ function setupResizer() {
 function setLoading(v) {
   isLoading = v;
   const btn = document.getElementById('sendBtn');
-  btn.disabled = v || !currentDealId;
+  btn.disabled = v || !currentSessionId;
   if (v) showTyping();
 }
 

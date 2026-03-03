@@ -1,0 +1,82 @@
+{
+  "id": "6c3HY2yFyAwJLZ1I",
+  "name": "CW-08: Get Draft",
+  "active": true,
+  "nodes": [
+    {
+      "id": "cw08-0001-0000-0000-000000000001",
+      "name": "Webhook: Get Draft",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "cw08-0001-0000-0000-000000000001",
+      "position": [240, 300],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "get-draft",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "cw08-0002-0000-0000-000000000002",
+      "name": "Code: Extract Draft ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "const id = $input.first().json.query?.id || '';\nif (!id || isNaN(parseInt(id, 10))) throw new Error('id query parameter is required and must be a number');\nreturn [{ json: { draft_id: parseInt(id, 10) } }];"
+      }
+    },
+    {
+      "id": "cw08-0003-0000-0000-000000000003",
+      "name": "Postgres: Fetch Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [680, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, deal_id, output_type, recipient_email, recipient_name, subject, full_content AS body, status, sent_at FROM outputs_log WHERE id = {{ $json.draft_id }} LIMIT 1",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cw08-0004-0000-0000-000000000004",
+      "name": "Respond: Return Draft",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin", "value": "*" },
+              { "name": "Content-Type", "value": "application/json" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Get Draft": {
+      "main": [[{ "node": "Code: Extract Draft ID", "type": "main", "index": 0 }]]
+    },
+    "Code: Extract Draft ID": {
+      "main": [[{ "node": "Postgres: Fetch Draft", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Fetch Draft": {
+      "main": [[{ "node": "Respond: Return Draft", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
