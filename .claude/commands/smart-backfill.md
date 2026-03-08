@@ -89,13 +89,24 @@ After completion, report:
 
 ### 4a. Verify results
 
-After the backfill completes, run verification:
+After the backfill completes, run the audit script:
 
 ```bash
-PGPASSWORD=$(grep POSTGRES_PASSWORD "/Users/austinhollsnd/Desktop/COMPLETE AGENTIC WF/deal-intelligence-engine/.env" | cut -d= -f2) psql -h localhost -p 5433 -U clearwater -d clearwater_deals -c "SELECT scored_at::date, pain_score p, power_score po, vision_score v, value_score va, change_score ch, control_score co, (pain_score+power_score+vision_score+value_score+change_score+control_score) as total, critical_activity_stage cas, trigger_type FROM deal_health WHERE deal_id='<deal_id>' ORDER BY scored_at"
+cd "/Users/austinhollsnd/Desktop/COMPLETE AGENTIC WF/deal-intelligence-engine" && python3 scripts/audit_deal.py <deal_id> 2>&1
 ```
 
-Present the score progression table to Austin for review.
+The audit checks: score dupes, doc_type classification, stakeholder quality, DAP populated, outputs clean, next step accuracy, and all dates backdated correctly.
+
+Then run the calibration checklist:
+1. **Scores** — only from calls/docs, no email-only noise, no same-date dupes
+2. **Stakeholders** — remove Clearwater internals, dedup, clean names
+3. **DAP** — populated, overdue flags accurate, gap badge correct
+4. **Outputs** — no stale drafts, no echo noise, approach docs in outputs_log
+5. **Next step** — realistic date, not falsely overdue
+6. **Backdating** — ALL dates reflect real dates, not backfill run date
+7. **last_activity_date** — set to actual last engagement date
+
+Fix any issues found, then present the clean audit to Austin.
 
 ### 5. If `all` — guided deal-by-deal walkthrough
 
