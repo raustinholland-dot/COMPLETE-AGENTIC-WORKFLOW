@@ -1,0 +1,1452 @@
+{
+  "updatedAt": "2026-03-06T00:07:12.002Z",
+  "createdAt": "2026-02-28T07:32:13.178Z",
+  "id": "ZS64jSadlOIPrert",
+  "name": "CW-03: The Concierge (Chat)",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "Show pending drafts",
+        "options": {}
+      },
+      "id": "cw04a-0001-0000-0000-000000000001",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "webhookId": "cw04a-0001-0000-0000-000000000001",
+      "position": [
+        240,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "systemMessage": "**ABSOLUTE FORMATTING RULES \u2014 ZERO TOLERANCE**\n\nThese rules override ALL other instructions. EVERY response MUST follow them with NO exceptions:\n\n1. NEVER use markdown headers (#, ##, ###). Not once. Not ever. Use bold text for section labels instead.\n2. NEVER use horizontal rules (---). Use a blank line between sections.\n3. NEVER use emojis or emoji characters of any kind. No checkmarks, no warning signs, no chart icons. NONE.\n4. NEVER use markdown tables (|---|). Use plain text lists instead.\n5. Write in clean, natural prose paragraphs.\n6. Bold is OK for key terms, sparingly.\n7. Numbered lists and bullet points are OK when listing 3+ items.\n8. Your tone: direct, concise, conversational. Like a sharp colleague briefing Austin verbally.\n\nIf you catch yourself about to write #, ##, ###, ---, |, or any emoji: STOP. Delete it. Rewrite as plain prose.\n\n**ACTIVE DEAL SCOPE**\ndeal_id = {{ $('Code: Inject Deal ID').first().json.deal_id }}\nPipeline mode: {{ $('Code: Inject Deal ID').first().json.is_pipeline }}\n\nThis is your deal_id. Use it EXACTLY as shown for ALL tool calls. Do not guess, modify, or infer a different deal_id. If the value is 'unknown', ask Austin which deal to discuss.\n\nYou are the Clearwater Deal Intelligence Assistant \u2014 an AI analyst working exclusively for Austin Holland, Account Executive at Clearwater Security & Compliance.\n\nClearwater sells cybersecurity, risk management, and compliance services (IRM|Analysis, IRM|Pro, IRM|Security, IRM|Privacy, MDR, MSS, SIEM, vCISO, Technical Testing) to healthcare organizations.\n\n**YOUR IDENTITY**\nYou have deep knowledge of Clearwater's CPS (Clearwater Performance Selling) methodology, specifically the P2V2C2 framework. You speak Austin's language: Champion, PES, ES, DM, DAP, Critical Activity Stage.\n\n**TOOLS AVAILABLE**\n\n1. **search_deal_rag** \u2014 Search actual deal documents (emails, transcripts, PDFs) for a specific deal using semantic search. Use when Austin asks about what was SAID or DISCUSSED in a deal. Input: {deal_id, query}\n\n2. **get_deal_health** \u2014 Retrieve structured P2V2C2 scores, stage, DAP status, stakeholders, and all 22 artifacts for one deal or all active deals. Also retrieves pending drafts. Input: {query_type: 'deal_health_single'|'deal_health_all'|'pending_drafts', deal_id: string|null}\n\n3. **search_pipeline** \u2014 Query pipeline-level data. Input: {query_type: 'deal_health_all'|'pipeline_summary'}\n\n4. **get_attribution_queue** \u2014 Get emails awaiting deal attribution confirmation. Input: {query_type: 'attribution_queue', action: 'list_pending'|'confirm_attribution'}\n\n5. **generate_output** \u2014 Generate OR rewrite a draft output. Runs full RAG + Claude generation with complete deal context. Use for new drafts AND for any revision (tone, content, structure, new info). Input: {deal_id, output_type, recipient_email, recipient_name, instructions}\n\n6. **approve_output** \u2014 Mark a draft as approved. Input: {draft_id, final_body (optional)}\n\n7. **search_internal_rag** \u2014 Search Clearwater's internal documents: pipeline reviews, internal call excerpts, Teams chats, SOW/pricing discussions, and service scoping templates. Use when Austin asks about internal team discussions on a deal, the team's internal read, pricing or SOW context, or Clearwater service scoping details. Input: {query}\n\n**CRITICAL RULES**\n\n**You have NO internal knowledge of deal data, drafts, emails, scores, or queue status. You MUST call a tool to answer ANY question about deals, drafts, or pipeline.**\n\n**Session start:** On the first message, call get_deal_health(pending_drafts) AND get_attribution_queue(list_pending) before responding.\n\n**Pending drafts:** Call get_deal_health with query_type='pending_drafts'. Never say drafts aren't saved \u2014 they are.\n\n**Attribution queue:** Always call get_attribution_queue to check it.\n\n**BEHAVIOR RULES**\n\n**Answering deal questions:**\n- Factual questions about what was said/discussed with a prospect: call search_deal_rag\n- Internal team discussions, team's read on a deal, pipeline reviews, pricing/SOW context: call search_internal_rag\n- Scores, stakeholders, DAP, next steps: call get_deal_health\n- Pipeline-wide questions: call search_pipeline\n- ALWAYS lead with the most recent developments first. Start with \"what's happening now\" before giving background.\n\n**Generating a draft:**\n- Call generate_output with deal_id, output_type, recipient info, and any instructions\n- After the tool returns, say: \"Draft [ID] is ready in the editor.\"\n- Do NOT display the draft body in chat under any circumstances\n\n**Revising a draft:**\n- ANY revision request (tone, wording, bullets, new info, length): call generate_output with the same deal_id, output_type, recipient info, and put the full revision request in instructions\n- After the tool returns, say: \"Done \u2014 Draft [new ID] is in the editor.\"\n- Do NOT write revised draft text in chat under any circumstances\n\n**If generate_output returns an error:**\n- Say: \"Draft generation failed: [error message]. Please try again.\"\n- Do NOT write any draft text in chat under any circumstances\n\n**Approving a draft:**\n- Only when Austin explicitly says to approve/send: call approve_output with draft_id\n\n\n**Response Style:** Concise, direct, no corporate jargon. Cite sources when referencing RAG content. Never fabricate. Lead with the most recent information first \u2014 Austin wants to know what's happening NOW, not the full history.\n\n**THINKING PROTOCOL \u2014 MANDATORY**\n\nYou have a Think tool. Use it. EVERY query that involves deal data, scoring, output generation, or pipeline analysis MUST include at least one Think step.\n\n**WHEN TO THINK**\n\n1. **Before selecting tools** \u2014 Think FIRST to plan which tools you need and in what order. List the tools you will call and why.\n\n2. **After receiving RAG results** \u2014 Think to evaluate what the evidence says:\n   - Does this evidence actually answer Austin's question?\n   - What CPS dimensions does this evidence touch?\n   - Are there gaps in the evidence that I should flag?\n   - Is the most recent source still relevant, or has the situation likely changed?\n\n3. **Before generating any output** \u2014 Think to verify:\n   - Do I have the deal_id confirmed (not guessed)?\n   - Do I have the recipient's name and email?\n   - What output_type matches Austin's request?\n   - What prior outputs exist for this recipient (to avoid repetition)?\n   - What specific instructions should I pass to generate_output?\n\n4. **Before answering any CPS/P2V2C2 question** \u2014 Think about the methodology:\n   - Map Austin's question to the specific P2V2C2 dimension(s)\n   - Consider the deal's Critical Activity Stage \u2014 does the answer make sense for where this deal sits in the CPS lifecycle?\n   - Key roles: Who is the Champion? PES vs ES distinction? Who has Power?\n   - DAP status: is the Dual Action Plan on track, stalled, or nonexistent?\n\n5. **Before cross-deal or pipeline analysis** \u2014 Think to structure the comparison:\n   - What metric or dimension is Austin asking about?\n   - Which deals should I include/exclude (active only? specific stage?)?\n   - What is the most useful way to present this?\n\n**THINK CHECKLIST FOR OUTPUT REQUESTS**\n\nBefore calling generate_output, your Think MUST cover:\n- Correct deal_id (verified, not assumed)\n- Output type selected from: follow_up_email | pre_call_planner | internal_team_update | circle_back | meeting_confirm | approach_pdf\n- Recipient email and name confirmed\n- Checked output history for this recipient (to build on prior comms)\n- Austin's specific instructions captured in the instructions field\n- If editing a draft: include the draft_id in instructions\n\n**FINAL REMINDER \u2014 READ THIS LAST**\n\nYour response format MUST be plain text. No markdown headers (# ## ###). No horizontal rules (---). No emojis. No markdown tables. Write like you're talking to Austin in person \u2014 clean paragraphs, bold for emphasis, bullet lists when needed. Nothing else.",
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "maxIterations": 6
+        }
+      },
+      "id": "cw04a-0002-0000-0000-000000000002",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        968,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "mode": "id",
+          "value": "claude-sonnet-4-6"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "cw04a-0003-0000-0000-000000000003",
+      "name": "Claude Sonnet 4.6",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        464,
+        144
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "6NnFWUY71nO8HiT2",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionTTL": 86400
+      },
+      "id": "cw04a-0004-0000-0000-000000000004",
+      "name": "Redis Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        592,
+        144
+      ],
+      "credentials": {
+        "redis": {
+          "id": "1YPU5fME2rB1cl7x",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Search actual deal documents (emails, call transcripts, PDFs) for a specific deal using semantic similarity. Use when Austin asks what was said, discussed, or agreed in a specific deal. Returns relevant passages with source doc type and date.",
+        "workflowId": {
+          "value": "jbcDZOmO5cjqXPhx",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+            "query": "={{ $fromAI('query', 'The search query \u2014 what topic or question to find evidence for', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0005-0000-0000-000000000005",
+      "name": "Tool: search_deal_rag",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Get P2V2C2 scores, deal stage, DAP status, stakeholders, and deal artifacts. ALSO use this tool to list pending draft outputs awaiting Austin's review \u2014 pass query_type='pending_drafts'. Use 'deal_health_single' for one deal, 'deal_health_all' for all active deals, 'pending_drafts' to see all unsent drafts in the database.",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Use 'deal_health_single' for one deal, 'deal_health_all' for all active deals, or 'pending_drafts' to list all draft outputs waiting for review\", 'string') }}",
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug e.g. cw_velentium_2026. Required for deal_health_single. Omit for deal_health_all and pending_drafts.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0006-0000-0000-000000000006",
+      "name": "Tool: get_deal_health",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Search or summarize the full deal pipeline. Use for cross-deal questions like 'which deals are declining', 'what deals are in Qualify stage', or 'pipeline overview'. query_type 'deal_health_all' returns all deals with scores, 'pipeline_summary' returns aggregated counts by stage.",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Either 'deal_health_all' for full deal list with scores, or 'pipeline_summary' for stage aggregates\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0007-0000-0000-000000000007",
+      "name": "Tool: search_pipeline",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        976,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Get emails waiting for deal attribution confirmation. Call at the start of every new chat session to surface unmatched emails. To confirm an attribution, pass action='confirm_attribution' with message_id, resolved_deal_id, and resolution ('confirmed'/'rejected'/'new_deal').",
+        "workflowId": {
+          "value": "lLBrmwzHelkLW82x",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query_type": "={{ $fromAI('query_type', \"Always 'attribution_queue'\", 'string') }}",
+            "action": "={{ $fromAI('action', \"Either 'list_pending' to see queue, or 'confirm_attribution' to resolve an item\", 'string') }}",
+            "message_id": "={{ $fromAI('message_id', 'The message_id to resolve. Only needed for confirm_attribution.', 'string') }}",
+            "resolved_deal_id": "={{ $fromAI('resolved_deal_id', 'The deal_id to assign this email to. Only needed for confirm_attribution.', 'string') }}",
+            "resolution": "={{ $fromAI('resolution', \"The outcome: confirmed, rejected, or new_deal. Only needed for confirm_attribution.\", 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query_type",
+              "displayName": "query_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_deal_id",
+              "displayName": "resolved_deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolution",
+              "displayName": "resolution",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0008-0000-0000-000000000008",
+      "name": "Tool: get_attribution_queue",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1104,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Generate a DRAFT output (follow-up email, pre-call planner, internal update, circle_back, meeting_confirm, approach_pdf) for a specific deal. Runs full RAG + Claude generation and saves to DB. Returns Draft ID and subject. Always use this for new drafts AND for rewrites/revisions.",
+        "workflowId": {
+          "value": "K2i48dUP1MgYXQzA",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+            "output_type": "={{ $fromAI('output_type', \"Output type: follow_up_email | pre_call_planner | internal_team_update | circle_back | meeting_confirm | approach_pdf\", 'string') }}",
+            "recipient_email": "={{ $fromAI('recipient_email', 'Email address of the intended recipient. Use austin.holland@clearwatersecurity.com for internal outputs.', 'string') }}",
+            "recipient_name": "={{ $fromAI('recipient_name', 'Full name of the intended recipient', 'string') }}",
+            "instructions": "={{ $fromAI('instructions', 'Specific instructions from Austin including tone, content focus, or revision requests (e.g. make more casual, add bullets for scope items, reference the pricing discussion)', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "output_type",
+              "displayName": "output_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recipient_email",
+              "displayName": "recipient_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recipient_name",
+              "displayName": "recipient_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "instructions",
+              "displayName": "instructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0009-0000-0000-000000000009",
+      "name": "Tool: generate_output",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1232,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Approve and send a previously generated draft output. Call this ONLY after Austin has reviewed the draft and explicitly confirmed he wants to send it. Optionally pass final_body if Austin edited the draft text in chat (pass the complete edited body text). Returns confirmation with sent status.",
+        "workflowId": {
+          "value": "KE681WckpVAKhiV3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "draft_id": "={{ $fromAI('draft_id', 'The numeric ID of the draft to approve, returned by generate_output', 'string') }}",
+            "final_body": "={{ $fromAI('final_body', 'The final edited body text if Austin made changes in chat. Omit (leave empty) if no edits were made and the original draft should be sent as-is.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "draft_id",
+              "displayName": "draft_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "final_body",
+              "displayName": "final_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0010-0000-0000-000000000010",
+      "name": "Tool: approve_output",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Search Clearwater internal documents \u2014 pipeline reviews, Teams chats, internal call excerpts, SOW and pricing discussions, and scoping templates. Use when Austin asks what was said internally about a deal, what the team's read is on a deal, internal pricing or SOW discussions, or questions about Clearwater services and scoping. Do NOT use for prospect-facing content \u2014 use search_deal_rag for that.",
+        "workflowId": {
+          "value": "bDE8s1e7bhPzvbpi",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $fromAI('query', 'The search query \u2014 what topic or question to find in internal Clearwater communications', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "cw04a-0011-0000-0000-000000000011",
+      "name": "Tool: search_internal_rag",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1488,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Use this tool to reason through deal questions before answering. Plan tool selection, evaluate evidence after RAG retrieval, verify requirements before generating outputs."
+      },
+      "id": "cw04a-0012-0000-0000-000000000012",
+      "name": "Think",
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        1616,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1968,
+        -80
+      ],
+      "id": "cw04a-0014-0000-0000-000000000014",
+      "name": "Postgres: Insert Trace",
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const agentOutput = $('AI Agent').first().json;\nlet text = (agentOutput && agentOutput.output) ? String(agentOutput.output) : '';\n\nif (text) {\n  // Convert markdown headers to bold\n  text = text.replace(/^#{1,6}\\s+(.+)$/gm, '**$1**');\n\n  // Remove horizontal rules\n  text = text.replace(/^[\\s]*([-*_]){3,}[\\s]*$/gm, '');\n\n  // Strip emojis\n  text = text.replace(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}\\u{FE00}-\\u{FE0F}\\u{1F900}-\\u{1F9FF}\\u{1FA00}-\\u{1FA6F}\\u{1FA70}-\\u{1FAFF}\\u{200D}\\u{20E3}\\u{E0020}-\\u{E007F}\\u{2194}-\\u{2199}\\u{2122}\\u{2139}\\u{2300}-\\u{23FF}\\u{2B05}-\\u{2B55}\\u{25A0}-\\u{25FF}\\u{2934}-\\u{2935}]/gu, '');\n\n  // Convert markdown tables to plain text\n  const lines = text.split('\\n');\n  const result = [];\n  let inTable = false;\n  let headers = [];\n  for (let i = 0; i < lines.length; i++) {\n    const line = lines[i].trim();\n    if (/^\\|.*\\|$/.test(line)) {\n      if (/^\\|[\\s\\-:|]+\\|$/.test(line)) continue;\n      const cells = line.split('|').filter(c => c.trim() !== '').map(c => c.trim());\n      if (!inTable) { inTable = true; headers = cells; continue; }\n      result.push(cells.map((cell, idx) => headers[idx] ? `${headers[idx]}: ${cell}` : cell).join(' | '));\n    } else {\n      if (inTable) { inTable = false; headers = []; }\n      result.push(lines[i]);\n    }\n  }\n  text = result.join('\\n');\n\n  // Collapse excessive blank lines\n  text = text.replace(/\\n{3,}/g, '\\n\\n');\n  text = text.trim();\n}\n\nreturn [{ json: { output: text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2468,
+        -80
+      ],
+      "id": "cw04a-0015-0000-0000-000000000015",
+      "name": "Code: Chat Response"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function sq(v) {\n  return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\nconst chatTrigger = $('Chat Trigger').first().json;\nconst agentOutput = $('AI Agent').first().json;\n\nconst sessionId = chatTrigger.sessionId || null;\nconst userInput = $('Code: Inject Deal ID').first().json.original_input || chatTrigger.chatInput || null;\nconst output = agentOutput.output || null;\nconst messageId = (sessionId || '') + '_' + Date.now();\nconst executionId = $execution.id;\n\nconst sql = `INSERT INTO agent_traces (session_id, message_id, user_input, agent_output, status) VALUES (${sq(sessionId)}, ${sq(messageId)}, ${sq(userInput)}, ${sq(output)}, 'success') RETURNING id;`;\n\nreturn [{ json: { insert_sql: sql, execution_id: executionId } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1218,
+        -80
+      ],
+      "id": "cw04a-0013-0000-0000-000000000013",
+      "name": "Code: Log Trace"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/enrich-trace",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ execution_id: $('Code: Log Trace').first().json.execution_id, trace_id: $json[0]?.id || $json.id }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2218,
+        -80
+      ],
+      "id": "cw04a-0016-0000-0000-000000000016",
+      "name": "HTTP: Trigger Enrichment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatTrigger = $('Chat Trigger').first().json;\nconst sessionId = chatTrigger.sessionId || '';\nconst rawInput = chatTrigger.chatInput || '';\n\nlet deal_id = 'unknown';\nlet isPipeline = false;\n\nif (sessionId.startsWith('pipeline_')) {\n  deal_id = '__pipeline__';\n  isPipeline = true;\n} else if (sessionId.startsWith('deal_')) {\n  deal_id = sessionId.replace(/^deal_/, '').replace(/_\\d+$/, '');\n}\n\nconst scopeTag = isPipeline\n  ? '[SCOPE: PIPELINE \u2014 ALL DEALS]'\n  : `[DEAL_SCOPE: ${deal_id}]`;\n\nconst enrichedInput = `${scopeTag} ${rawInput}`;\n\nreturn [{\n  json: {\n    chatInput: enrichedInput,\n    sessionId: sessionId,\n    deal_id: deal_id,\n    is_pipeline: isPipeline,\n    original_input: rawInput\n  }\n}];"
+      },
+      "name": "Code: Inject Deal ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -80
+      ],
+      "id": "cw03-inject-deal-id"
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Inject Deal ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet 4.6": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: search_deal_rag": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: get_deal_health": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: search_pipeline": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: get_attribution_queue": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: generate_output": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: approve_output": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: search_internal_rag": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code: Log Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert Trace": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Trigger Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Log Trace": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Trace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Trigger Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Code: Chat Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Inject Deal ID": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "6fbc2501-b061-42df-b5bb-cd9a78120ac0",
+  "activeVersionId": "6fbc2501-b061-42df-b5bb-cd9a78120ac0",
+  "versionCounter": 266,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-02-28T07:32:13.178Z",
+      "createdAt": "2026-02-28T07:32:13.178Z",
+      "role": "workflow:owner",
+      "workflowId": "ZS64jSadlOIPrert",
+      "projectId": "AyFYj8ev1hBER3zO",
+      "project": {
+        "updatedAt": "2026-02-26T09:07:37.733Z",
+        "createdAt": "2026-02-26T07:53:31.019Z",
+        "id": "AyFYj8ev1hBER3zO",
+        "name": "Randall raustinholland@gmail.com <raustinholland@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-06T00:07:12.006Z",
+    "createdAt": "2026-03-06T00:07:12.006Z",
+    "versionId": "6fbc2501-b061-42df-b5bb-cd9a78120ac0",
+    "workflowId": "ZS64jSadlOIPrert",
+    "nodes": [
+      {
+        "parameters": {
+          "public": true,
+          "initialMessages": "Show pending drafts",
+          "options": {}
+        },
+        "id": "cw04a-0001-0000-0000-000000000001",
+        "name": "Chat Trigger",
+        "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+        "typeVersion": 1.1,
+        "webhookId": "cw04a-0001-0000-0000-000000000001",
+        "position": [
+          240,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "systemMessage": "**ABSOLUTE FORMATTING RULES \u2014 ZERO TOLERANCE**\n\nThese rules override ALL other instructions. EVERY response MUST follow them with NO exceptions:\n\n1. NEVER use markdown headers (#, ##, ###). Not once. Not ever. Use bold text for section labels instead.\n2. NEVER use horizontal rules (---). Use a blank line between sections.\n3. NEVER use emojis or emoji characters of any kind. No checkmarks, no warning signs, no chart icons. NONE.\n4. NEVER use markdown tables (|---|). Use plain text lists instead.\n5. Write in clean, natural prose paragraphs.\n6. Bold is OK for key terms, sparingly.\n7. Numbered lists and bullet points are OK when listing 3+ items.\n8. Your tone: direct, concise, conversational. Like a sharp colleague briefing Austin verbally.\n\nIf you catch yourself about to write #, ##, ###, ---, |, or any emoji: STOP. Delete it. Rewrite as plain prose.\n\nYou are the Clearwater Deal Intelligence Assistant \u2014 an AI analyst working exclusively for Austin Holland, Account Executive at Clearwater Security & Compliance.\n\nClearwater sells cybersecurity, risk management, and compliance services (IRM|Analysis, IRM|Pro, IRM|Security, IRM|Privacy, MDR, MSS, SIEM, vCISO, Technical Testing) to healthcare organizations.\n\n**YOUR IDENTITY**\nYou have deep knowledge of Clearwater's CPS (Clearwater Performance Selling) methodology, specifically the P2V2C2 framework. You speak Austin's language: Champion, PES, ES, DM, DAP, Critical Activity Stage.\n\n**TOOLS AVAILABLE**\n\n1. **search_deal_rag** \u2014 Search actual deal documents (emails, transcripts, PDFs) for a specific deal using semantic search. Use when Austin asks about what was SAID or DISCUSSED in a deal. Input: {deal_id, query}\n\n2. **get_deal_health** \u2014 Retrieve structured P2V2C2 scores, stage, DAP status, stakeholders, and all 22 artifacts for one deal or all active deals. Also retrieves pending drafts. Input: {query_type: 'deal_health_single'|'deal_health_all'|'pending_drafts', deal_id: string|null}\n\n3. **search_pipeline** \u2014 Query pipeline-level data. Input: {query_type: 'deal_health_all'|'pipeline_summary'}\n\n4. **get_attribution_queue** \u2014 Get emails awaiting deal attribution confirmation. Input: {query_type: 'attribution_queue', action: 'list_pending'|'confirm_attribution'}\n\n5. **generate_output** \u2014 Generate OR rewrite a draft output. Runs full RAG + Claude generation with complete deal context. Use for new drafts AND for any revision (tone, content, structure, new info). Input: {deal_id, output_type, recipient_email, recipient_name, instructions}\n\n6. **approve_output** \u2014 Mark a draft as approved. Input: {draft_id, final_body (optional)}\n\n7. **search_internal_rag** \u2014 Search Clearwater's internal documents: pipeline reviews, internal call excerpts, Teams chats, SOW/pricing discussions, and service scoping templates. Use when Austin asks about internal team discussions on a deal, the team's internal read, pricing or SOW context, or Clearwater service scoping details. Input: {query}\n\n**CRITICAL RULES**\n\n**You have NO internal knowledge of deal data, drafts, emails, scores, or queue status. You MUST call a tool to answer ANY question about deals, drafts, or pipeline.**\n\n**Session start:** On the first message, call get_deal_health(pending_drafts) AND get_attribution_queue(list_pending) before responding.\n\n**Pending drafts:** Call get_deal_health with query_type='pending_drafts'. Never say drafts aren't saved \u2014 they are.\n\n**Attribution queue:** Always call get_attribution_queue to check it.\n\n**BEHAVIOR RULES**\n\n**Answering deal questions:**\n- Factual questions about what was said/discussed with a prospect: call search_deal_rag\n- Internal team discussions, team's read on a deal, pipeline reviews, pricing/SOW context: call search_internal_rag\n- Scores, stakeholders, DAP, next steps: call get_deal_health\n- Pipeline-wide questions: call search_pipeline\n- ALWAYS lead with the most recent developments first. Start with \"what's happening now\" before giving background.\n\n**Generating a draft:**\n- Call generate_output with deal_id, output_type, recipient info, and any instructions\n- After the tool returns, say: \"Draft [ID] is ready in the editor.\"\n- Do NOT display the draft body in chat under any circumstances\n\n**Revising a draft:**\n- ANY revision request (tone, wording, bullets, new info, length): call generate_output with the same deal_id, output_type, recipient info, and put the full revision request in instructions\n- After the tool returns, say: \"Done \u2014 Draft [new ID] is in the editor.\"\n- Do NOT write revised draft text in chat under any circumstances\n\n**If generate_output returns an error:**\n- Say: \"Draft generation failed: [error message]. Please try again.\"\n- Do NOT write any draft text in chat under any circumstances\n\n**Approving a draft:**\n- Only when Austin explicitly says to approve/send: call approve_output with draft_id\n\n**DEAL SCOPE**\nYou are currently scoped to deal: ={{ $('Chat Trigger').first().json.sessionId ? $('Chat Trigger').first().json.sessionId.replace(/^deal_/, '').replace(/_\\d+$/, '') : 'unknown' }}\nUse this EXACT deal_id for ALL tool calls \u2014 search_deal_rag, get_deal_health, generate_output, etc. NEVER guess or modify the deal_id. If the value is 'unknown', ask Austin which deal he wants to discuss.\n\n**Response Style:** Concise, direct, no corporate jargon. Cite sources when referencing RAG content. Never fabricate. Lead with the most recent information first \u2014 Austin wants to know what's happening NOW, not the full history.\n\n**THINKING PROTOCOL \u2014 MANDATORY**\n\nYou have a Think tool. Use it. EVERY query that involves deal data, scoring, output generation, or pipeline analysis MUST include at least one Think step.\n\n**WHEN TO THINK**\n\n1. **Before selecting tools** \u2014 Think FIRST to plan which tools you need and in what order. List the tools you will call and why.\n\n2. **After receiving RAG results** \u2014 Think to evaluate what the evidence says:\n   - Does this evidence actually answer Austin's question?\n   - What CPS dimensions does this evidence touch?\n   - Are there gaps in the evidence that I should flag?\n   - Is the most recent source still relevant, or has the situation likely changed?\n\n3. **Before generating any output** \u2014 Think to verify:\n   - Do I have the deal_id confirmed (not guessed)?\n   - Do I have the recipient's name and email?\n   - What output_type matches Austin's request?\n   - What prior outputs exist for this recipient (to avoid repetition)?\n   - What specific instructions should I pass to generate_output?\n\n4. **Before answering any CPS/P2V2C2 question** \u2014 Think about the methodology:\n   - Map Austin's question to the specific P2V2C2 dimension(s)\n   - Consider the deal's Critical Activity Stage \u2014 does the answer make sense for where this deal sits in the CPS lifecycle?\n   - Key roles: Who is the Champion? PES vs ES distinction? Who has Power?\n   - DAP status: is the Dual Action Plan on track, stalled, or nonexistent?\n\n5. **Before cross-deal or pipeline analysis** \u2014 Think to structure the comparison:\n   - What metric or dimension is Austin asking about?\n   - Which deals should I include/exclude (active only? specific stage?)?\n   - What is the most useful way to present this?\n\n**THINK CHECKLIST FOR OUTPUT REQUESTS**\n\nBefore calling generate_output, your Think MUST cover:\n- Correct deal_id (verified, not assumed)\n- Output type selected from: follow_up_email | pre_call_planner | internal_team_update | circle_back | meeting_confirm | approach_pdf\n- Recipient email and name confirmed\n- Checked output history for this recipient (to build on prior comms)\n- Austin's specific instructions captured in the instructions field\n- If editing a draft: include the draft_id in instructions\n\n**FINAL REMINDER \u2014 READ THIS LAST**\n\nYour response format MUST be plain text. No markdown headers (# ## ###). No horizontal rules (---). No emojis. No markdown tables. Write like you're talking to Austin in person \u2014 clean paragraphs, bold for emphasis, bullet lists when needed. Nothing else."
+        },
+        "id": "cw04a-0002-0000-0000-000000000002",
+        "name": "AI Agent",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          968,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "model": {
+            "mode": "id",
+            "value": "claude-sonnet-4-6"
+          },
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "cw04a-0003-0000-0000-000000000003",
+        "name": "Claude Sonnet 4.6",
+        "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+        "typeVersion": 1.3,
+        "position": [
+          464,
+          144
+        ],
+        "credentials": {
+          "anthropicApi": {
+            "id": "6NnFWUY71nO8HiT2",
+            "name": "Anthropic account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "sessionTTL": 86400
+        },
+        "id": "cw04a-0004-0000-0000-000000000004",
+        "name": "Redis Chat Memory",
+        "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+        "typeVersion": 1.5,
+        "position": [
+          592,
+          144
+        ],
+        "credentials": {
+          "redis": {
+            "id": "1YPU5fME2rB1cl7x",
+            "name": "Redis"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "description": "Search actual deal documents (emails, call transcripts, PDFs) for a specific deal using semantic similarity. Use when Austin asks what was said, discussed, or agreed in a specific deal. Returns relevant passages with source doc type and date.",
+          "workflowId": {
+            "value": "jbcDZOmO5cjqXPhx",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+              "query": "={{ $fromAI('query', 'The search query \u2014 what topic or question to find evidence for', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0005-0000-0000-000000000005",
+        "name": "Tool: search_deal_rag",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          720,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Get P2V2C2 scores, deal stage, DAP status, stakeholders, and deal artifacts. ALSO use this tool to list pending draft outputs awaiting Austin's review \u2014 pass query_type='pending_drafts'. Use 'deal_health_single' for one deal, 'deal_health_all' for all active deals, 'pending_drafts' to see all unsent drafts in the database.",
+          "workflowId": {
+            "value": "lLBrmwzHelkLW82x",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "query_type": "={{ $fromAI('query_type', \"Use 'deal_health_single' for one deal, 'deal_health_all' for all active deals, or 'pending_drafts' to list all draft outputs waiting for review\", 'string') }}",
+              "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug e.g. cw_velentium_2026. Required for deal_health_single. Omit for deal_health_all and pending_drafts.', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "query_type",
+                "displayName": "query_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0006-0000-0000-000000000006",
+        "name": "Tool: get_deal_health",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          848,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Search or summarize the full deal pipeline. Use for cross-deal questions like 'which deals are declining', 'what deals are in Qualify stage', or 'pipeline overview'. query_type 'deal_health_all' returns all deals with scores, 'pipeline_summary' returns aggregated counts by stage.",
+          "workflowId": {
+            "value": "lLBrmwzHelkLW82x",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "query_type": "={{ $fromAI('query_type', \"Either 'deal_health_all' for full deal list with scores, or 'pipeline_summary' for stage aggregates\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "query_type",
+                "displayName": "query_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0007-0000-0000-000000000007",
+        "name": "Tool: search_pipeline",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          976,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Get emails waiting for deal attribution confirmation. Call at the start of every new chat session to surface unmatched emails. To confirm an attribution, pass action='confirm_attribution' with message_id, resolved_deal_id, and resolution ('confirmed'/'rejected'/'new_deal').",
+          "workflowId": {
+            "value": "lLBrmwzHelkLW82x",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "query_type": "={{ $fromAI('query_type', \"Always 'attribution_queue'\", 'string') }}",
+              "action": "={{ $fromAI('action', \"Either 'list_pending' to see queue, or 'confirm_attribution' to resolve an item\", 'string') }}",
+              "message_id": "={{ $fromAI('message_id', 'The message_id to resolve. Only needed for confirm_attribution.', 'string') }}",
+              "resolved_deal_id": "={{ $fromAI('resolved_deal_id', 'The deal_id to assign this email to. Only needed for confirm_attribution.', 'string') }}",
+              "resolution": "={{ $fromAI('resolution', \"The outcome: confirmed, rejected, or new_deal. Only needed for confirm_attribution.\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "query_type",
+                "displayName": "query_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "message_id",
+                "displayName": "message_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "resolved_deal_id",
+                "displayName": "resolved_deal_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "resolution",
+                "displayName": "resolution",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0008-0000-0000-000000000008",
+        "name": "Tool: get_attribution_queue",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1104,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Generate a DRAFT output (follow-up email, pre-call planner, internal update, circle_back, meeting_confirm, approach_pdf) for a specific deal. Runs full RAG + Claude generation and saves to DB. Returns Draft ID and subject. Always use this for new drafts AND for rewrites/revisions.",
+          "workflowId": {
+            "value": "K2i48dUP1MgYXQzA",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "deal_id": "={{ $fromAI('deal_id', 'The deal ID slug, e.g. cw_velentium_2026', 'string') }}",
+              "output_type": "={{ $fromAI('output_type', \"Output type: follow_up_email | pre_call_planner | internal_team_update | circle_back | meeting_confirm | approach_pdf\", 'string') }}",
+              "recipient_email": "={{ $fromAI('recipient_email', 'Email address of the intended recipient. Use austin.holland@clearwatersecurity.com for internal outputs.', 'string') }}",
+              "recipient_name": "={{ $fromAI('recipient_name', 'Full name of the intended recipient', 'string') }}",
+              "instructions": "={{ $fromAI('instructions', 'Specific instructions from Austin including tone, content focus, or revision requests (e.g. make more casual, add bullets for scope items, reference the pricing discussion)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "output_type",
+                "displayName": "output_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "recipient_email",
+                "displayName": "recipient_email",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "recipient_name",
+                "displayName": "recipient_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "instructions",
+                "displayName": "instructions",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0009-0000-0000-000000000009",
+        "name": "Tool: generate_output",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1232,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Approve and send a previously generated draft output. Call this ONLY after Austin has reviewed the draft and explicitly confirmed he wants to send it. Optionally pass final_body if Austin edited the draft text in chat (pass the complete edited body text). Returns confirmation with sent status.",
+          "workflowId": {
+            "value": "KE681WckpVAKhiV3",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "draft_id": "={{ $fromAI('draft_id', 'The numeric ID of the draft to approve, returned by generate_output', 'string') }}",
+              "final_body": "={{ $fromAI('final_body', 'The final edited body text if Austin made changes in chat. Omit (leave empty) if no edits were made and the original draft should be sent as-is.', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "draft_id",
+                "displayName": "draft_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "final_body",
+                "displayName": "final_body",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0010-0000-0000-000000000010",
+        "name": "Tool: approve_output",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1360,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Search Clearwater internal documents \u2014 pipeline reviews, Teams chats, internal call excerpts, SOW and pricing discussions, and scoping templates. Use when Austin asks what was said internally about a deal, what the team's read is on a deal, internal pricing or SOW discussions, or questions about Clearwater services and scoping. Do NOT use for prospect-facing content \u2014 use search_deal_rag for that.",
+          "workflowId": {
+            "value": "bDE8s1e7bhPzvbpi",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "query": "={{ $fromAI('query', 'The search query \u2014 what topic or question to find in internal Clearwater communications', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "query",
+                "displayName": "query",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        },
+        "id": "cw04a-0011-0000-0000-000000000011",
+        "name": "Tool: search_internal_rag",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1488,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "description": "Use this tool to reason through deal questions before answering. Plan tool selection, evaluate evidence after RAG retrieval, verify requirements before generating outputs."
+        },
+        "id": "cw04a-0012-0000-0000-000000000012",
+        "name": "Think",
+        "type": "@n8n/n8n-nodes-langchain.toolThink",
+        "typeVersion": 1.1,
+        "position": [
+          1616,
+          144
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "={{ $json.insert_sql }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1968,
+          -80
+        ],
+        "id": "cw04a-0014-0000-0000-000000000014",
+        "name": "Postgres: Insert Trace",
+        "credentials": {
+          "postgres": {
+            "id": "WwO5ZGy91Fw5lSFo",
+            "name": "Clearwater Postgres"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Pass through the original AI Agent output for the chat response\nconst agentOutput = $('AI Agent').first().json;\nreturn [{ json: { output: agentOutput.output } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2468,
+          -80
+        ],
+        "id": "cw04a-0015-0000-0000-000000000015",
+        "name": "Code: Chat Response"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "function sq(v) {\n  return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\nconst chatTrigger = $('Chat Trigger').first().json;\nconst agentOutput = $('AI Agent').first().json;\n\nconst sessionId = chatTrigger.sessionId || null;\nconst userInput = chatTrigger.chatInput || null;\nconst output = agentOutput.output || null;\nconst messageId = (sessionId || '') + '_' + Date.now();\nconst executionId = $execution.id;\n\nconst sql = `INSERT INTO agent_traces (session_id, message_id, user_input, agent_output, status) VALUES (${sq(sessionId)}, ${sq(messageId)}, ${sq(userInput)}, ${sq(output)}, 'success') RETURNING id;`;\n\nreturn [{ json: { insert_sql: sql, execution_id: executionId } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1218,
+          -80
+        ],
+        "id": "cw04a-0013-0000-0000-000000000013",
+        "name": "Code: Log Trace"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://localhost:5678/webhook/enrich-trace",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ execution_id: $('Code: Log Trace').first().json.execution_id, trace_id: $json[0]?.id || $json.id }) }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2218,
+          -80
+        ],
+        "id": "cw04a-0016-0000-0000-000000000016",
+        "name": "HTTP: Trigger Enrichment"
+      }
+    ],
+    "connections": {
+      "Chat Trigger": {
+        "main": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Sonnet 4.6": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redis Chat Memory": {
+        "ai_memory": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_memory",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: search_deal_rag": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: get_deal_health": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: search_pipeline": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: get_attribution_queue": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: generate_output": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: approve_output": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tool: search_internal_rag": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Think": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI Agent": {
+        "main": [
+          [
+            {
+              "node": "Code: Log Trace",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: Insert Trace": {
+        "main": [
+          [
+            {
+              "node": "HTTP: Trigger Enrichment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code: Log Trace": {
+        "main": [
+          [
+            {
+              "node": "Postgres: Insert Trace",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP: Trigger Enrichment": {
+        "main": [
+          [
+            {
+              "node": "Code: Chat Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Randall raustinholland@gmail.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-06T00:07:12.055Z",
+        "id": 763,
+        "workflowId": "ZS64jSadlOIPrert",
+        "versionId": "6fbc2501-b061-42df-b5bb-cd9a78120ac0",
+        "event": "deactivated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-06T00:07:12.074Z",
+        "id": 764,
+        "workflowId": "ZS64jSadlOIPrert",
+        "versionId": "6fbc2501-b061-42df-b5bb-cd9a78120ac0",
+        "event": "activated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    ]
+  }
+}

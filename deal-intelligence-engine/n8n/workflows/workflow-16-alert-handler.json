@@ -1,0 +1,790 @@
+{
+  "updatedAt": "2026-03-05T08:00:42.693Z",
+  "createdAt": "2026-03-05T06:28:34.325Z",
+  "id": "8ygX3a6Qr6fTsG8K",
+  "name": "CW-16: Alert Handler",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "cw16-0001-0000-0000-000000000001",
+      "name": "Webhook: Alert Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-trigger",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "cw16-0001-0000-0000-000000000001"
+    },
+    {
+      "id": "cw16-0002-0000-0000-000000000002",
+      "name": "Code: Format Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst severity = (input.severity || 'error').toUpperCase();\nconst wfName = input.workflow_name || input.workflow_id || 'Unknown';\nconst nodeName = input.node_name || '';\nconst errorMsg = (input.error_message || 'No details').substring(0, 80);\n\n// SMS subject (under 160 chars)\nconst smsSubject = `[${severity}] ${wfName}: ${nodeName} - ${errorMsg}`.substring(0, 155);\n\n// SQL to log the error\nfunction sq(v) { return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\"; }\n\nconst insert_sql = `INSERT INTO workflow_errors (workflow_id, workflow_name, node_name, error_message, execution_id, deal_id, severity, metadata) VALUES (${sq(input.workflow_id)}, ${sq(input.workflow_name)}, ${sq(input.node_name)}, ${sq(input.error_message)}, ${sq(input.execution_id)}, ${sq(input.deal_id)}, ${sq(input.severity)}, ${sq(JSON.stringify(input.metadata || {}))})`;\n\nreturn [{ json: { smsSubject, insert_sql, severity: input.severity || 'error' } }];"
+      }
+    },
+    {
+      "id": "cw16-0003-0000-0000-000000000003",
+      "name": "Postgres: Log Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_sql }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cw16-0004-0000-0000-000000000004",
+      "name": "IF: Is Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cw16-cond-severity-critical",
+              "leftValue": "={{ $('Code: Format Alert').first().json.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cw16-0005-0000-0000-000000000005",
+      "name": "Pushover: Send Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+            },
+            {
+              "name": "user",
+              "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+            },
+            {
+              "name": "title",
+              "value": "Echo Alert"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Code: Format Alert').first().json.smsSubject }}"
+            },
+            {
+              "name": "priority",
+              "value": "1"
+            },
+            {
+              "name": "sound",
+              "value": "pushover"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cw16-0006-0000-0000-000000000006",
+      "name": "Schedule: Hourly Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        600
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cw16-0007-0000-0000-000000000007",
+      "name": "Postgres: Count Unacked Errors",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        460,
+        600
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as error_count, MAX(created_at) as latest_error, string_agg(DISTINCT workflow_name, ', ') as affected_workflows FROM workflow_errors WHERE acknowledged = FALSE AND created_at > NOW() - INTERVAL '1 hour'",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cw16-0008-0000-0000-000000000008",
+      "name": "IF: Has Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cw16-cond-error-count",
+              "leftValue": "={{ $json.error_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cw16-0009-0000-0000-000000000009",
+      "name": "Code: Build Digest SMS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const count = $input.first().json.error_count;\nconst workflows = $input.first().json.affected_workflows || 'unknown';\nconst smsSubject = `[DIGEST] ${count} error(s) in last hour: ${workflows}`.substring(0, 155);\nreturn [{ json: { smsSubject } }];"
+      }
+    },
+    {
+      "id": "cw16-0010-0000-0000-000000000010",
+      "name": "Pushover: Send Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+            },
+            {
+              "name": "user",
+              "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+            },
+            {
+              "name": "title",
+              "value": "Echo Digest"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Code: Build Digest SMS').first().json.smsSubject }}"
+            },
+            {
+              "name": "priority",
+              "value": "0"
+            },
+            {
+              "name": "sound",
+              "value": "none"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Alert Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Format Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Format Alert": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Log Error": {
+      "main": [
+        [
+          {
+            "node": "IF: Is Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Critical?": {
+      "main": [
+        [
+          {
+            "node": "Pushover: Send Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Schedule: Hourly Check": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Count Unacked Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Count Unacked Errors": {
+      "main": [
+        [
+          {
+            "node": "IF: Has Errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Has Errors?": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Digest SMS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Code: Build Digest SMS": {
+      "main": [
+        [
+          {
+            "node": "Pushover: Send Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule: Hourly Check": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "f5ec880c-2120-4d9d-95b6-7bdfc5282d73",
+  "activeVersionId": "f5ec880c-2120-4d9d-95b6-7bdfc5282d73",
+  "versionCounter": 24,
+  "triggerCount": 2,
+  "shared": [
+    {
+      "updatedAt": "2026-03-05T06:28:34.325Z",
+      "createdAt": "2026-03-05T06:28:34.325Z",
+      "role": "workflow:owner",
+      "workflowId": "8ygX3a6Qr6fTsG8K",
+      "projectId": "AyFYj8ev1hBER3zO",
+      "project": {
+        "updatedAt": "2026-02-26T09:07:37.733Z",
+        "createdAt": "2026-02-26T07:53:31.019Z",
+        "id": "AyFYj8ev1hBER3zO",
+        "name": "Randall raustinholland@gmail.com <raustinholland@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-05T08:00:42.696Z",
+    "createdAt": "2026-03-05T08:00:42.696Z",
+    "versionId": "f5ec880c-2120-4d9d-95b6-7bdfc5282d73",
+    "workflowId": "8ygX3a6Qr6fTsG8K",
+    "nodes": [
+      {
+        "id": "cw16-0001-0000-0000-000000000001",
+        "name": "Webhook: Alert Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          200,
+          300
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "alert-trigger",
+          "responseMode": "onReceived",
+          "options": {}
+        },
+        "webhookId": "cw16-0001-0000-0000-000000000001"
+      },
+      {
+        "id": "cw16-0002-0000-0000-000000000002",
+        "name": "Code: Format Alert",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst severity = (input.severity || 'error').toUpperCase();\nconst wfName = input.workflow_name || input.workflow_id || 'Unknown';\nconst nodeName = input.node_name || '';\nconst errorMsg = (input.error_message || 'No details').substring(0, 80);\n\n// SMS subject (under 160 chars)\nconst smsSubject = `[${severity}] ${wfName}: ${nodeName} - ${errorMsg}`.substring(0, 155);\n\n// SQL to log the error\nfunction sq(v) { return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\"; }\n\nconst insert_sql = `INSERT INTO workflow_errors (workflow_id, workflow_name, node_name, error_message, execution_id, deal_id, severity, metadata) VALUES (${sq(input.workflow_id)}, ${sq(input.workflow_name)}, ${sq(input.node_name)}, ${sq(input.error_message)}, ${sq(input.execution_id)}, ${sq(input.deal_id)}, ${sq(input.severity)}, ${sq(JSON.stringify(input.metadata || {}))})`;\n\nreturn [{ json: { smsSubject, insert_sql, severity: input.severity || 'error' } }];"
+        }
+      },
+      {
+        "id": "cw16-0003-0000-0000-000000000003",
+        "name": "Postgres: Log Error",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          720,
+          300
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "={{ $json.insert_sql }}",
+          "options": {}
+        },
+        "credentials": {
+          "postgres": {
+            "id": "WwO5ZGy91Fw5lSFo",
+            "name": "Clearwater Postgres"
+          }
+        }
+      },
+      {
+        "id": "cw16-0004-0000-0000-000000000004",
+        "name": "IF: Is Critical?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          960,
+          300
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "id": "cw16-cond-severity-critical",
+                "leftValue": "={{ $('Code: Format Alert').first().json.severity }}",
+                "rightValue": "critical",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "cw16-0005-0000-0000-000000000005",
+        "name": "Pushover: Send Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          200
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.pushover.net/1/messages.json",
+          "sendHeaders": false,
+          "sendBody": true,
+          "specifyBody": "keypair",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "token",
+                "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+              },
+              {
+                "name": "user",
+                "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+              },
+              {
+                "name": "title",
+                "value": "Echo Alert"
+              },
+              {
+                "name": "message",
+                "value": "={{ $('Code: Format Alert').first().json.smsSubject }}"
+              },
+              {
+                "name": "priority",
+                "value": "1"
+              },
+              {
+                "name": "sound",
+                "value": "pushover"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "cw16-0006-0000-0000-000000000006",
+        "name": "Schedule: Hourly Check",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          200,
+          600
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "cw16-0007-0000-0000-000000000007",
+        "name": "Postgres: Count Unacked Errors",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          460,
+          600
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT COUNT(*) as error_count, MAX(created_at) as latest_error, string_agg(DISTINCT workflow_name, ', ') as affected_workflows FROM workflow_errors WHERE acknowledged = FALSE AND created_at > NOW() - INTERVAL '1 hour'",
+          "options": {}
+        },
+        "credentials": {
+          "postgres": {
+            "id": "WwO5ZGy91Fw5lSFo",
+            "name": "Clearwater Postgres"
+          }
+        }
+      },
+      {
+        "id": "cw16-0008-0000-0000-000000000008",
+        "name": "IF: Has Errors?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          720,
+          600
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "id": "cw16-cond-error-count",
+                "leftValue": "={{ $json.error_count }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "gt"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "cw16-0009-0000-0000-000000000009",
+        "name": "Code: Build Digest SMS",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          600
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const count = $input.first().json.error_count;\nconst workflows = $input.first().json.affected_workflows || 'unknown';\nconst smsSubject = `[DIGEST] ${count} error(s) in last hour: ${workflows}`.substring(0, 155);\nreturn [{ json: { smsSubject } }];"
+        }
+      },
+      {
+        "id": "cw16-0010-0000-0000-000000000010",
+        "name": "Pushover: Send Digest",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1200,
+          600
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.pushover.net/1/messages.json",
+          "sendHeaders": false,
+          "sendBody": true,
+          "specifyBody": "keypair",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "token",
+                "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+              },
+              {
+                "name": "user",
+                "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+              },
+              {
+                "name": "title",
+                "value": "Echo Digest"
+              },
+              {
+                "name": "message",
+                "value": "={{ $('Code: Build Digest SMS').first().json.smsSubject }}"
+              },
+              {
+                "name": "priority",
+                "value": "0"
+              },
+              {
+                "name": "sound",
+                "value": "none"
+              }
+            ]
+          },
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Webhook: Alert Trigger": {
+        "main": [
+          [
+            {
+              "node": "Code: Format Alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code: Format Alert": {
+        "main": [
+          [
+            {
+              "node": "Postgres: Log Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: Log Error": {
+        "main": [
+          [
+            {
+              "node": "IF: Is Critical?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF: Is Critical?": {
+        "main": [
+          [
+            {
+              "node": "Pushover: Send Alert",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Schedule: Hourly Check": {
+        "main": [
+          [
+            {
+              "node": "Postgres: Count Unacked Errors",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: Count Unacked Errors": {
+        "main": [
+          [
+            {
+              "node": "IF: Has Errors?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF: Has Errors?": {
+        "main": [
+          [
+            {
+              "node": "Code: Build Digest SMS",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Code: Build Digest SMS": {
+        "main": [
+          [
+            {
+              "node": "Pushover: Send Digest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Randall raustinholland@gmail.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-05T08:00:42.738Z",
+        "id": 733,
+        "workflowId": "8ygX3a6Qr6fTsG8K",
+        "versionId": "f5ec880c-2120-4d9d-95b6-7bdfc5282d73",
+        "event": "deactivated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-05T08:00:42.759Z",
+        "id": 734,
+        "workflowId": "8ygX3a6Qr6fTsG8K",
+        "versionId": "f5ec880c-2120-4d9d-95b6-7bdfc5282d73",
+        "event": "activated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    ]
+  }
+}

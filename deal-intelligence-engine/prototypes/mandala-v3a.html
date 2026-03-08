@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mandala v3a — Accentuated Complexity</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f1a; color: #e2e8f0;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 30px 20px 60px;
+  }
+  h1 { font-size: 24px; font-weight: 600; color: #f8fafc; margin-bottom: 4px; letter-spacing: -0.5px; }
+  .subtitle { font-size: 14px; color: #94a3b8; margin-bottom: 32px; font-weight: 300; }
+  .mandala-row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; justify-content: center; margin-bottom: 40px; }
+  .mandala-card { display: flex; flex-direction: column; align-items: center; }
+  .mandala-card canvas { border-radius: 12px; background: #13132a; }
+  .deal-label { margin-top: 10px; text-align: center; }
+  .deal-label .name { font-size: 15px; font-weight: 600; color: #f8fafc; }
+  .deal-label .meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .deal-label .score-badge { display: inline-block; margin-top: 4px; padding: 2px 10px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+  .legend-panel { max-width: 1200px; width: 100%; background: #1a1a2e; border-radius: 12px; padding: 24px 32px; margin-bottom: 24px; }
+  .legend-panel h2 { font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 16px; }
+  .legend-section { margin-bottom: 20px; }
+  .legend-section h3 { font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .legend-items { display: flex; flex-wrap: wrap; gap: 16px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .legend-line { width: 24px; height: 0; border-top: 2px solid; flex-shrink: 0; }
+  .legend-line.dashed { border-top-style: dashed; }
+  .legend-circle { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .legend-circle.open { background: transparent; border: 1.5px solid; }
+  .fractal-examples { display: flex; gap: 24px; margin-top: 8px; }
+  .fractal-example { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .fractal-example canvas { border-radius: 4px; background: #13132a; }
+  .fractal-example span { font-size: 11px; color: #64748b; }
+  .notice-panel { max-width: 1200px; width: 100%; background: #1e1b4b; border: 1px solid #312e81; border-radius: 12px; padding: 20px 28px; }
+  .notice-panel h2 { font-size: 15px; font-weight: 600; color: #a5b4fc; margin-bottom: 10px; }
+  .notice-panel ul { list-style: none; padding: 0; }
+  .notice-panel li { font-size: 13px; color: #c7d2fe; padding: 4px 0 4px 16px; position: relative; }
+  .notice-panel li::before { content: '\25C6'; position: absolute; left: 0; color: #6366f1; font-size: 10px; top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>Mandala v3a &mdash; Accentuated Complexity</h1>
+<p class="subtitle">Enhanced texture contrast: simple deals are smooth and delicate, complex deals are ornate and dense</p>
+
+<div class="mandala-row">
+  <div class="mandala-card">
+    <canvas id="c-simple" width="380" height="420"></canvas>
+    <div class="deal-label">
+      <div class="name">Regional Clinic</div>
+      <div class="meta">$75K &middot; Discover &middot; 3 scoring runs</div>
+      <span class="score-badge" id="badge-simple"></span>
+    </div>
+  </div>
+  <div class="mandala-card">
+    <canvas id="c-moderate" width="380" height="420"></canvas>
+    <div class="deal-label">
+      <div class="name">Acme Health</div>
+      <div class="meta">$285K &middot; Prove &middot; 10 scoring runs</div>
+      <span class="score-badge" id="badge-moderate"></span>
+    </div>
+  </div>
+  <div class="mandala-card">
+    <canvas id="c-complex" width="380" height="420"></canvas>
+    <div class="deal-label">
+      <div class="name">Enterprise Health System</div>
+      <div class="meta">$1.2M &middot; Negotiate &middot; 12 scoring runs</div>
+      <span class="score-badge" id="badge-complex"></span>
+    </div>
+  </div>
+</div>
+
+<div class="legend-panel">
+  <h2>Legend</h2>
+  <div class="legend-section">
+    <h3>Fractal Edge Complexity (Enhanced in v3a)</h3>
+    <p style="font-size:12px;color:#94a3b8;margin-bottom:8px;">
+      The contrast between simple and complex is now more dramatic. Simple deals have perfectly smooth, delicate arcs.
+      Complex deals have elaborate snowflake-like fractal branching with sub-peaks. The difference should be visceral.
+    </p>
+    <div class="fractal-examples" id="fractal-legend"></div>
+  </div>
+  <div class="legend-section">
+    <h3>What Changed in v3a</h3>
+    <div class="legend-items" style="flex-direction:column;gap:6px;">
+      <div class="legend-item" style="font-size:11px;color:#94a3b8">Arm width scales with complexity (narrow for simple, wide for complex)</div>
+      <div class="legend-item" style="font-size:11px;color:#94a3b8">Inner rings are desaturated, outer rings are vivid (blooming effect)</div>
+      <div class="legend-item" style="font-size:11px;color:#94a3b8">Stakeholder branches curve more on complex deals (organic, root-like)</div>
+      <div class="legend-item" style="font-size:11px;color:#94a3b8">Complex deals have subtle radial grain texture in the background</div>
+    </div>
+  </div>
+  <div class="legend-section">
+    <h3>Stakeholder Branches</h3>
+    <div class="legend-items">
+      <div class="legend-item"><span class="legend-line dashed" style="border-color:#94a3b8;"></span><span class="legend-circle open" style="border-color:#94a3b8;"></span> PC</div>
+      <div class="legend-item"><span class="legend-line" style="border-color:#6366f1;"></span><span class="legend-circle" style="background:#6366f1;"></span> Champion</div>
+      <div class="legend-item"><span class="legend-line dashed" style="border-color:#f59e0b;"></span><span class="legend-circle open" style="border-color:#f59e0b;"></span> PES</div>
+      <div class="legend-item"><span class="legend-line" style="border-color:#ca8a04;"></span><span class="legend-circle" style="background:#ca8a04;"></span> ES</div>
+      <div class="legend-item"><span class="legend-line" style="border-color:#15803d;width:28px;border-width:3px;"></span><span class="legend-circle" style="background:#15803d;width:10px;height:10px;"></span> DM</div>
+      <div class="legend-item"><span class="legend-line dashed" style="border-color:#64748b;"></span><span class="legend-circle open" style="border-color:#64748b;"></span> Other</div>
+    </div>
+  </div>
+  <div class="legend-section">
+    <h3>Six CPS Arms (clockwise from top)</h3>
+    <div class="legend-items">
+      <div class="legend-item">Pain (12 o'clock)</div>
+      <div class="legend-item">Power (2 o'clock)</div>
+      <div class="legend-item">Vision (4 o'clock)</div>
+      <div class="legend-item">Value (6 o'clock)</div>
+      <div class="legend-item">Change (8 o'clock)</div>
+      <div class="legend-item">Control (10 o'clock)</div>
+    </div>
+  </div>
+</div>
+
+<div class="notice-panel">
+  <h2>What to Notice (v3a vs v3)</h2>
+  <ul>
+    <li><strong>Edge contrast is dramatic:</strong> Regional Clinic has perfectly smooth, clean arcs. Enterprise Health System has elaborate snowflake-like fractal edges with sub-peak branching. The silhouettes are unmistakably different.</li>
+    <li><strong>Arm width tells the story:</strong> Regional Clinic's arms are narrow and delicate. Enterprise Health System's arms are wide and substantial. You can feel the deal's weight.</li>
+    <li><strong>Color blooms outward:</strong> Inner rings are muted and desaturated. Outer rings are vivid and rich. Mature deals look like they're blooming with color at their edges.</li>
+    <li><strong>Branches curve with complexity:</strong> Regional Clinic's single branch is nearly straight. Enterprise Health System's branches curve organically like roots.</li>
+    <li><strong>Background texture:</strong> Simple deals float on clean darkness. Complex deals sit on a faint radial grain, adding visual weight.</li>
+  </ul>
+</div>
+
+<script>
+// ====================================================================
+// SAMPLE DATA (same as v3)
+// ====================================================================
+const SIMPLE = {
+  company_name: 'Regional Clinic', deal_value_usd: 75000, deal_stage: 'discover',
+  complexity: { stakeholders: 1, workstreams: 1, doc_volume: 30, doc_types: 2, calendar_events: 2 },
+  scoring_runs: [
+    { scored_at:'2026-02-20', stage:'discover', pain:1, power:0, vision:1, value:0, change:0, control:0, total:2, pe_sponsor:0, trend:'improving', delta:2, activity:2, days_in_stage:1, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Lisa Park',title:'IT Director'}] },
+    { scored_at:'2026-03-01', stage:'discover', pain:2, power:1, vision:1, value:1, change:1, control:0, total:6, pe_sponsor:0, trend:'improving', delta:4, activity:3, days_in_stage:10, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Lisa Park',title:'IT Director'}] },
+    { scored_at:'2026-03-12', stage:'discover', pain:2, power:1, vision:2, value:1, change:1, control:1, total:8, pe_sponsor:0, trend:'improving', delta:2, activity:2, days_in_stage:21, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Lisa Park',title:'IT Director'}] }
+  ]
+};
+
+const MODERATE = {
+  company_name: 'Acme Health', deal_value_usd: 285000, deal_stage: 'prove',
+  complexity: { stakeholders: 3, workstreams: 2, doc_volume: 180, doc_types: 3, calendar_events: 6 },
+  scoring_runs: [
+    { scored_at:'2026-01-15', stage:'discover', pain:1, power:1, vision:2, value:1, change:1, control:1, total:7, pe_sponsor:0, trend:'improving', delta:7, activity:1, days_in_stage:1, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[] },
+    { scored_at:'2026-01-22', stage:'discover', pain:2, power:1, vision:2, value:2, change:1, control:1, total:9, pe_sponsor:0, trend:'improving', delta:2, activity:5, days_in_stage:8, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Sarah Chen',title:'CISO'}] },
+    { scored_at:'2026-01-29', stage:'qualify', pain:2, power:2, vision:3, value:2, change:2, control:2, total:13, pe_sponsor:1, trend:'improving', delta:4, activity:6, days_in_stage:1, dap:{exists:true,agreed:false,milestones:1,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Sarah Chen',title:'CISO'}] },
+    { scored_at:'2026-02-05', stage:'qualify', pain:3, power:2, vision:3, value:2, change:2, control:2, total:14, pe_sponsor:1, trend:'improving', delta:1, activity:3, days_in_stage:8, dap:{exists:true,agreed:false,milestones:2,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'PES',confirmed:false,position:'es',name:'Mike Torres',title:'CEO'}] },
+    { scored_at:'2026-02-12', stage:'qualify', pain:3, power:2, vision:3, value:3, change:2, control:2, total:15, pe_sponsor:2, trend:'improving', delta:1, activity:2, days_in_stage:15, dap:{exists:true,agreed:false,milestones:3,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'PES',confirmed:false,position:'es',name:'Mike Torres',title:'CEO'}] },
+    { scored_at:'2026-02-19', stage:'qualify', pain:2, power:1, vision:2, value:2, change:1, control:2, total:10, pe_sponsor:1, trend:'declining', delta:-5, activity:1, days_in_stage:22, dap:{exists:true,agreed:false,milestones:3,total:14,gap:true}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'PES',confirmed:false,position:'es',name:'Mike Torres',title:'CEO'}] },
+    { scored_at:'2026-02-26', stage:'prove', pain:3, power:2, vision:3, value:3, change:2, control:3, total:16, pe_sponsor:2, trend:'improving', delta:6, activity:4, days_in_stage:1, dap:{exists:true,agreed:true,milestones:5,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'PES',confirmed:false,position:'es',name:'Mike Torres',title:'CEO'}] },
+    { scored_at:'2026-03-05', stage:'prove', pain:4, power:2, vision:4, value:3, change:3, control:3, total:19, pe_sponsor:3, trend:'improving', delta:3, activity:7, days_in_stage:8, dap:{exists:true,agreed:true,milestones:7,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'PES',confirmed:false,position:'es',name:'Mike Torres',title:'CEO'},{role:'UDM',confirmed:false,position:'dm',name:'Board Chair',title:'Board'}] },
+    { scored_at:'2026-03-12', stage:'prove', pain:4, power:2, vision:4, value:4, change:3, control:3, total:20, pe_sponsor:4, trend:'improving', delta:1, activity:5, days_in_stage:15, dap:{exists:true,agreed:true,milestones:9,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'ES',confirmed:true,position:'es',name:'Mike Torres',title:'CEO'},{role:'UDM',confirmed:false,position:'dm',name:'Board Chair',title:'Board'}] },
+    { scored_at:'2026-03-19', stage:'prove', pain:5, power:2, vision:5, value:4, change:3, control:3, total:22, pe_sponsor:4, trend:'stable', delta:2, activity:6, days_in_stage:22, dap:{exists:true,agreed:true,milestones:10,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'Sarah Chen',title:'CISO'},{role:'ES',confirmed:true,position:'es',name:'Mike Torres',title:'CEO'},{role:'UDM',confirmed:false,position:'dm',name:'Board Chair',title:'Board'}] }
+  ]
+};
+
+const COMPLEX = {
+  company_name: 'Enterprise Health System', deal_value_usd: 1200000, deal_stage: 'negotiate',
+  complexity: { stakeholders: 8, workstreams: 5, doc_volume: 620, doc_types: 5, calendar_events: 14 },
+  scoring_runs: [
+    { scored_at:'2025-04-10', stage:'discover', pain:1, power:0, vision:1, value:0, change:0, control:0, total:2, pe_sponsor:0, trend:'improving', delta:2, activity:2, days_in_stage:1, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[] },
+    { scored_at:'2025-05-08', stage:'discover', pain:2, power:1, vision:2, value:1, change:1, control:1, total:8, pe_sponsor:0, trend:'improving', delta:6, activity:4, days_in_stage:29, dap:{exists:false,agreed:false,milestones:0,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'James Wright',title:'VP IT'}] },
+    { scored_at:'2025-06-12', stage:'qualify', pain:2, power:2, vision:3, value:2, change:2, control:2, total:13, pe_sponsor:1, trend:'improving', delta:5, activity:6, days_in_stage:1, dap:{exists:true,agreed:false,milestones:1,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'James Wright',title:'VP IT'},{role:'PES',confirmed:false,position:'es',name:'Dr. Patel',title:'CMO'}] },
+    { scored_at:'2025-07-15', stage:'qualify', pain:3, power:2, vision:3, value:3, change:2, control:2, total:15, pe_sponsor:2, trend:'improving', delta:2, activity:5, days_in_stage:34, dap:{exists:true,agreed:false,milestones:3,total:14,gap:false}, stakeholders:[{role:'PC',confirmed:false,position:'champion',name:'James Wright',title:'VP IT'},{role:'PES',confirmed:false,position:'es',name:'Dr. Patel',title:'CMO'},{role:'UDM',confirmed:false,position:'dm',name:'CFO Office',title:'CFO'}] },
+    { scored_at:'2025-09-22', stage:'prove', pain:3, power:2, vision:3, value:2, change:2, control:3, total:15, pe_sponsor:2, trend:'stable', delta:0, activity:3, days_in_stage:1, dap:{exists:true,agreed:true,milestones:4,total:14,gap:true}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'PES',confirmed:false,position:'es',name:'Dr. Patel',title:'CMO'},{role:'UDM',confirmed:false,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'}] },
+    { scored_at:'2025-10-20', stage:'prove', pain:4, power:3, vision:4, value:3, change:3, control:3, total:20, pe_sponsor:3, trend:'improving', delta:5, activity:8, days_in_stage:29, dap:{exists:true,agreed:true,milestones:6,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'PES',confirmed:false,position:'es',name:'Dr. Patel',title:'CMO'},{role:'UDM',confirmed:false,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'}] },
+    { scored_at:'2025-11-18', stage:'prove', pain:4, power:3, vision:4, value:4, change:3, control:4, total:22, pe_sponsor:3, trend:'improving', delta:2, activity:6, days_in_stage:58, dap:{exists:true,agreed:true,milestones:8,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'ES',confirmed:true,position:'es',name:'Dr. Patel',title:'CMO'},{role:'UDM',confirmed:false,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'},{role:'OTHER',confirmed:false,position:null,name:'IT Security',title:'Security Analyst'}] },
+    { scored_at:'2025-12-16', stage:'negotiate', pain:4, power:4, vision:5, value:4, change:4, control:4, total:25, pe_sponsor:4, trend:'improving', delta:3, activity:7, days_in_stage:1, dap:{exists:true,agreed:true,milestones:10,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'ES',confirmed:true,position:'es',name:'Dr. Patel',title:'CMO'},{role:'DM',confirmed:true,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'},{role:'OTHER',confirmed:false,position:null,name:'IT Security',title:'Security Analyst'},{role:'OTHER',confirmed:false,position:null,name:'Procurement',title:'Procurement Lead'}] },
+    { scored_at:'2026-01-20', stage:'negotiate', pain:5, power:4, vision:5, value:4, change:4, control:4, total:26, pe_sponsor:5, trend:'stable', delta:1, activity:4, days_in_stage:36, dap:{exists:true,agreed:true,milestones:12,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'ES',confirmed:true,position:'es',name:'Dr. Patel',title:'CMO'},{role:'DM',confirmed:true,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'},{role:'OTHER',confirmed:false,position:null,name:'IT Security',title:'Security Analyst'},{role:'OTHER',confirmed:false,position:null,name:'Procurement',title:'Procurement Lead'}] },
+    { scored_at:'2026-02-24', stage:'negotiate', pain:5, power:4, vision:5, value:5, change:5, control:5, total:29, pe_sponsor:5, trend:'improving', delta:3, activity:6, days_in_stage:71, dap:{exists:true,agreed:true,milestones:13,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'ES',confirmed:true,position:'es',name:'Dr. Patel',title:'CMO'},{role:'DM',confirmed:true,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'},{role:'OTHER',confirmed:false,position:null,name:'IT Security',title:'Security Analyst'},{role:'OTHER',confirmed:false,position:null,name:'Procurement',title:'Procurement Lead'},{role:'OTHER',confirmed:false,position:null,name:'Board Liaison',title:'Board Member'}] },
+    { scored_at:'2026-03-17', stage:'negotiate', pain:5, power:5, vision:5, value:5, change:5, control:5, total:30, pe_sponsor:5, trend:'stable', delta:1, activity:4, days_in_stage:92, dap:{exists:true,agreed:true,milestones:14,total:14,gap:false}, stakeholders:[{role:'C',confirmed:true,position:'champion',name:'James Wright',title:'VP IT'},{role:'ES',confirmed:true,position:'es',name:'Dr. Patel',title:'CMO'},{role:'DM',confirmed:true,position:'dm',name:'CFO Office',title:'CFO'},{role:'OTHER',confirmed:false,position:null,name:'Compliance Team',title:'Compliance'},{role:'OTHER',confirmed:false,position:null,name:'Legal',title:'Legal Counsel'},{role:'OTHER',confirmed:false,position:null,name:'IT Security',title:'Security Analyst'},{role:'OTHER',confirmed:false,position:null,name:'Procurement',title:'Procurement Lead'},{role:'OTHER',confirmed:false,position:null,name:'Board Liaison',title:'Board Member'}] }
+  ]
+};
+
+// ====================================================================
+// COMPLEXITY
+// ====================================================================
+function getComplexityScore(deal) {
+  let s = 0; const c = deal.complexity;
+  s += c.stakeholders >= 5 ? 3 : c.stakeholders >= 3 ? 2 : c.stakeholders >= 1 ? 1 : 0;
+  s += c.workstreams >= 5 ? 3 : c.workstreams >= 3 ? 2 : c.workstreams >= 1 ? 1 : 0;
+  s += c.doc_volume >= 500 ? 3 : c.doc_volume >= 200 ? 2 : c.doc_volume >= 50 ? 1 : 0;
+  s += c.doc_types >= 5 ? 3 : c.doc_types >= 4 ? 2 : c.doc_types >= 2 ? 1 : 0;
+  s += c.calendar_events >= 9 ? 3 : c.calendar_events >= 4 ? 2 : c.calendar_events >= 1 ? 1 : 0;
+  return s;
+}
+
+function getFractalLevel(s) {
+  if (s <= 3) return 0; if (s <= 6) return 1; if (s <= 9) return 2; if (s <= 12) return 3; return 4;
+}
+
+// v3a: fixed arm width (reverted — variable width looked empty)
+function getArmWidth() {
+  return (Math.PI * 2) / 6 * 0.78;
+}
+
+// v3a: organic branch curves always visible
+function getBranchCurveAmplitude() {
+  return 0.35; // always organic
+}
+
+// ====================================================================
+// FRACTAL EDGE — enhanced for v3a
+// ====================================================================
+function subdivideEdge(points, level, bumpScale, cx, cy, maxLevel) {
+  if (level === 0 || points.length < 2) return points;
+  const newPoints = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i], p1 = points[i + 1];
+    const dx = p1.x - p0.x, dy = p1.y - p0.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.8) { newPoints.push(p0); continue; }
+
+    const a = { x: p0.x + dx / 3, y: p0.y + dy / 3 };
+    const b = { x: p0.x + 2 * dx / 3, y: p0.y + 2 * dy / 3 };
+    const nx = -dy / len, ny = dx / len;
+    // v3a: larger bump scale
+    const bumpHeight = len * bumpScale * 0.50;
+    const midX = (p0.x + p1.x) / 2, midY = (p0.y + p1.y) / 2;
+    const dot = nx * (cx - midX) + ny * (cy - midY);
+    const sign = dot > 0 ? -1 : 1;
+    const peak = {
+      x: (a.x + b.x) / 2 + sign * nx * bumpHeight,
+      y: (a.y + b.y) / 2 + sign * ny * bumpHeight
+    };
+
+    newPoints.push(p0, a);
+
+    // v3a: sub-peak branching at high fractal levels for extra ornateness
+    if (maxLevel >= 3 && level >= 2) {
+      const subScale = 0.3;
+      const subH = len * bumpScale * subScale;
+      const sub1 = {
+        x: (a.x + peak.x) / 2 + sign * nx * subH * 0.5,
+        y: (a.y + peak.y) / 2 + sign * ny * subH * 0.5
+      };
+      const sub2 = {
+        x: (peak.x + b.x) / 2 + sign * nx * subH * 0.5,
+        y: (peak.y + b.y) / 2 + sign * ny * subH * 0.5
+      };
+      newPoints.push(sub1, peak, sub2);
+    } else {
+      newPoints.push(peak);
+    }
+    newPoints.push(b);
+  }
+  newPoints.push(points[points.length - 1]);
+  // v3a: slower decay so deeper recursion retains prominence
+  return subdivideEdge(newPoints, level - 1, bumpScale * 0.55, cx, cy, maxLevel);
+}
+
+function fractalArcPoints(cx, cy, radius, startAngle, endAngle, fractalLevel, numSamples) {
+  // v3a: more samples at higher levels for smoother detail
+  numSamples = numSamples || (10 + fractalLevel * 4);
+  const pts = [];
+  for (let i = 0; i <= numSamples; i++) {
+    const t = i / numSamples;
+    const angle = startAngle + t * (endAngle - startAngle);
+    pts.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+  }
+  if (fractalLevel === 0) return pts;
+  return subdivideEdge(pts, fractalLevel, 1.0, cx, cy, fractalLevel);
+}
+
+// ====================================================================
+// COLOR — v3a saturation gradient
+// ====================================================================
+function scoreColor(score) {
+  if (score >= 4) return '#22c55e';
+  if (score >= 2) return '#eab308';
+  return '#ef4444';
+}
+
+function scoreColorRGB(score) {
+  if (score >= 4) return [34, 197, 94];
+  if (score >= 2) return [234, 179, 8];
+  return [239, 68, 68];
+}
+
+// v3a: desaturate inner rings, vivid outer rings
+function scoreColorWithSaturation(score, ringIndex, totalRings) {
+  const [r, g, b] = scoreColorRGB(score);
+  const t = totalRings <= 1 ? 1 : ringIndex / (totalRings - 1);
+  const sat = 0.35 + t * 0.65; // 0.35 muted → 1.0 vivid
+  const grey = 128;
+  return `rgb(${Math.round(grey + (r - grey) * sat)},${Math.round(grey + (g - grey) * sat)},${Math.round(grey + (b - grey) * sat)})`;
+}
+
+function scoreColorAlpha(score, alpha) {
+  if (score >= 4) return `rgba(34,197,94,${alpha})`;
+  if (score >= 2) return `rgba(234,179,8,${alpha})`;
+  return `rgba(239,68,68,${alpha})`;
+}
+
+function totalBadgeColor(total) {
+  if (total >= 22) return { bg: '#064e3b', text: '#34d399' };
+  if (total >= 15) return { bg: '#1c2a15', text: '#86efac' };
+  if (total >= 8)  return { bg: '#422006', text: '#fcd34d' };
+  return { bg: '#450a0a', text: '#fca5a5' };
+}
+
+// ====================================================================
+// v3a: NOISE TEXTURE for complex deals
+// ====================================================================
+function generateNoiseTexture(width, height, complexityScore) {
+  if (complexityScore <= 6) return null;
+  const offscreen = document.createElement('canvas');
+  offscreen.width = width; offscreen.height = height;
+  const octx = offscreen.getContext('2d');
+  const intensity = Math.min((complexityScore - 6) / 9, 1); // 0 at 6, 1 at 15
+  const cx = width / 2, cy = height / 2, maxR = Math.max(width, height) / 2;
+
+  const imgData = octx.createImageData(width, height);
+  const d = imgData.data;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy) / maxR;
+      const radialFade = Math.max(0, 1 - dist * 1.2);
+      const noise = (Math.random() - 0.5) * 2;
+      const val = noise * intensity * radialFade * 12;
+      const idx = (y * width + x) * 4;
+      d[idx] = 99 + val; d[idx+1] = 102 + val; d[idx+2] = 241 + val;
+      d[idx+3] = Math.max(0, intensity * radialFade * 8);
+    }
+  }
+  octx.putImageData(imgData, 0, 0);
+  return offscreen;
+}
+
+// ====================================================================
+// MANDALA RENDERER v3a
+// ====================================================================
+class MandalaRenderer {
+  constructor(canvasId, deal) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext('2d');
+    this.deal = deal;
+    this.cx = 190; this.cy = 195;
+    this.maxRadius = 145;
+    this.dims = ['pain', 'power', 'vision', 'value', 'change', 'control'];
+    this.armAngles = this.dims.map((_, i) => (i * Math.PI * 2) / 6 - Math.PI / 2);
+    this.complexityScore = getComplexityScore(deal);
+    this.fractalLevel = getFractalLevel(this.complexityScore);
+    this.armWidth = getArmWidth();
+    this.branchAmplitude = getBranchCurveAmplitude();
+    this.time = 0;
+    this.latestRun = deal.scoring_runs[deal.scoring_runs.length - 1];
+    this.noiseTexture = null; // grain removed — wasn't visible enough
+  }
+
+  getDormantGaps() {
+    const gaps = [];
+    for (let i = 1; i < this.deal.scoring_runs.length; i++) {
+      const prev = new Date(this.deal.scoring_runs[i - 1].scored_at);
+      const curr = new Date(this.deal.scoring_runs[i].scored_at);
+      const daysDiff = (curr - prev) / (1000 * 60 * 60 * 24);
+      if (daysDiff > 28) gaps.push({ afterIndex: i - 1, days: daysDiff });
+    }
+    return gaps;
+  }
+
+  computeRingLayout() {
+    const runs = this.deal.scoring_runs;
+    const gaps = this.getDormantGaps();
+    const dormantBandWidth = 6;
+    const centerRadius = this.getCenterRadius();
+    const peHaloWidth = this.latestRun.pe_sponsor > 0 ? 6 + this.latestRun.pe_sponsor : 0;
+    const innerStart = centerRadius + peHaloWidth + 8;
+    const availableSpace = this.maxRadius - innerStart - 10;
+    const totalDormant = gaps.length * dormantBandWidth;
+    const ringSpace = availableSpace - totalDormant;
+    const ringWidth = Math.max(ringSpace / runs.length, 3);
+
+    const layout = [];
+    let r = innerStart;
+    for (let i = 0; i < runs.length; i++) {
+      const gap = gaps.find(g => g.afterIndex === i - 1);
+      if (gap) {
+        layout.push({ type: 'dormant', innerR: r, outerR: r + dormantBandWidth, days: gap.days });
+        r += dormantBandWidth;
+      }
+      layout.push({ type: 'ring', innerR: r, outerR: r + ringWidth, runIndex: i });
+      r += ringWidth;
+    }
+    this.boundaryRadius = r + 4;
+    return layout;
+  }
+
+  getCenterRadius() {
+    const val = this.deal.deal_value_usd;
+    return Math.max(10, Math.min(40, 8 + Math.sqrt(val / 1000) * 0.95));
+  }
+
+  render(time) {
+    this.time = time;
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // v3a: draw noise texture for complex deals
+    if (this.noiseTexture) {
+      ctx.drawImage(this.noiseTexture, 0, 0);
+    }
+
+    const layout = this.computeRingLayout();
+    this.drawGlow();
+    this.drawCenter();
+    this.drawPEHalo();
+    this.drawRings(layout);
+    this.drawDAPBoundary();
+    this.drawBranches();
+    this.drawDimLabels();
+  }
+
+  drawGlow() {
+    const ctx = this.ctx;
+    const total = this.latestRun.total;
+    const intensity = total / 30;
+    const glowRadius = this.maxRadius * 0.8;
+    const grad = ctx.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, glowRadius);
+    if (total >= 22) {
+      grad.addColorStop(0, `rgba(34,197,94,${0.12 * intensity})`);
+      grad.addColorStop(1, 'rgba(34,197,94,0)');
+    } else if (total >= 12) {
+      grad.addColorStop(0, `rgba(234,179,8,${0.08 * intensity})`);
+      grad.addColorStop(1, 'rgba(234,179,8,0)');
+    } else {
+      grad.addColorStop(0, `rgba(239,68,68,${0.05 * intensity})`);
+      grad.addColorStop(1, 'rgba(239,68,68,0)');
+    }
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, glowRadius, 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill();
+  }
+
+  drawCenter() {
+    const ctx = this.ctx;
+    const r = this.getCenterRadius();
+    const total = this.latestRun.total;
+    const hue = total >= 22 ? 142 : total >= 12 ? 45 : 0;
+    const grad = ctx.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, r);
+    grad.addColorStop(0, `hsla(${hue}, 60%, 70%, 0.9)`);
+    grad.addColorStop(0.7, `hsla(${hue}, 50%, 40%, 0.8)`);
+    grad.addColorStop(1, `hsla(${hue}, 40%, 25%, 0.6)`);
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill();
+
+    const valStr = this.deal.deal_value_usd >= 1000000
+      ? `$${(this.deal.deal_value_usd / 1000000).toFixed(1)}M`
+      : `$${Math.round(this.deal.deal_value_usd / 1000)}K`;
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = `${Math.max(8, r * 0.45)}px Inter, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(valStr, this.cx, this.cy);
+  }
+
+  drawPEHalo() {
+    const pe = this.latestRun.pe_sponsor;
+    if (pe <= 0) return;
+    const ctx = this.ctx;
+    const centerR = this.getCenterRadius();
+    const haloR = centerR + 4 + pe * 1.2;
+    const alpha = 0.15 + pe * 0.08;
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, haloR, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(250,204,21,${alpha})`;
+    ctx.lineWidth = 1.5 + pe * 0.5; ctx.stroke();
+    const grad = ctx.createRadialGradient(this.cx, this.cy, centerR, this.cx, this.cy, haloR);
+    grad.addColorStop(0, `rgba(250,204,21,${alpha * 0.5})`);
+    grad.addColorStop(1, 'rgba(250,204,21,0)');
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, haloR, 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill();
+  }
+
+  // v3a: ring index and total passed for saturation gradient
+  drawFractalWedge(innerR, outerR, centerAngle, score, isOutermost, ringIndex, totalRings) {
+    const ctx = this.ctx;
+    const halfWidth = this.armWidth / 2;
+    const startAngle = centerAngle - halfWidth;
+    const endAngle = centerAngle + halfWidth;
+    const fl = this.fractalLevel;
+
+    // v3a: saturation gradient color
+    const color = scoreColorWithSaturation(score, ringIndex, totalRings);
+    const trend = this.latestRun.trend;
+
+    let alpha = 0.85;
+    if (isOutermost && trend === 'improving') {
+      alpha = 0.7 + 0.2 * Math.sin(this.time * 2.5);
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+
+    // Inner arc (smooth)
+    const numInner = 12;
+    for (let i = 0; i <= numInner; i++) {
+      const t = i / numInner;
+      const a = startAngle + t * (endAngle - startAngle);
+      const x = this.cx + innerR * Math.cos(a);
+      const y = this.cy + innerR * Math.sin(a);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+
+    // Outer arc with fractal subdivision
+    const outerPts = fractalArcPoints(this.cx, this.cy, outerR, endAngle, startAngle, fl);
+    for (let i = 0; i < outerPts.length; i++) {
+      ctx.lineTo(outerPts[i].x, outerPts[i].y);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawRings(layout) {
+    const ctx = this.ctx;
+    const runs = this.deal.scoring_runs;
+    const totalRings = runs.length;
+    let ringCounter = 0;
+
+    layout.forEach((item) => {
+      if (item.type === 'dormant') {
+        ctx.beginPath();
+        ctx.arc(this.cx, this.cy, (item.innerR + item.outerR) / 2, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(71,85,105,0.3)';
+        ctx.lineWidth = item.outerR - item.innerR;
+        ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+        return;
+      }
+
+      const run = runs[item.runIndex];
+      const isOutermost = item.runIndex === runs.length - 1;
+
+      this.dims.forEach((dim, di) => {
+        const score = run[dim];
+        const angle = this.armAngles[di];
+        this.drawFractalWedge(item.innerR, item.outerR, angle, score, isOutermost, ringCounter, totalRings);
+      });
+      ringCounter++;
+    });
+  }
+
+  drawDAPBoundary() {
+    const ctx = this.ctx;
+    const dap = this.latestRun.dap;
+    if (!dap.exists) {
+      ctx.beginPath(); ctx.arc(this.cx, this.cy, this.boundaryRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(71,85,105,0.25)'; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]); ctx.stroke(); ctx.setLineDash([]);
+      return;
+    }
+
+    const progress = dap.milestones / dap.total;
+    const endAngle = -Math.PI / 2 + Math.PI * 2 * progress;
+    const color = dap.agreed ? '#22c55e' : '#f59e0b';
+
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, this.boundaryRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(71,85,105,0.15)'; ctx.lineWidth = 1.5; ctx.setLineDash([]); ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(this.cx, this.cy, this.boundaryRadius, -Math.PI / 2, endAngle);
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.setLineDash(dap.agreed ? [] : [4, 4]); ctx.stroke(); ctx.setLineDash([]);
+
+    if (dap.gap) {
+      const flashAlpha = 0.3 + 0.3 * Math.sin(this.time * 4);
+      ctx.beginPath(); ctx.arc(this.cx, this.cy, this.boundaryRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(239,68,68,${flashAlpha})`; ctx.lineWidth = 3; ctx.stroke();
+    }
+
+    for (let i = 0; i < dap.milestones; i++) {
+      const tickAngle = -Math.PI / 2 + (i / dap.total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(this.cx + (this.boundaryRadius - 3) * Math.cos(tickAngle), this.cy + (this.boundaryRadius - 3) * Math.sin(tickAngle));
+      ctx.lineTo(this.cx + (this.boundaryRadius + 3) * Math.cos(tickAngle), this.cy + (this.boundaryRadius + 3) * Math.sin(tickAngle));
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke();
+    }
+  }
+
+  drawBranches() {
+    const ctx = this.ctx;
+    const stakeholders = this.latestRun.stakeholders;
+    if (!stakeholders || stakeholders.length === 0) return;
+
+    const groups = { champion: [], es: [], dm: [], other: [] };
+    stakeholders.forEach(s => {
+      const pos = s.position || 'other';
+      if (groups[pos]) groups[pos].push(s); else groups.other.push(s);
+    });
+
+    const groupAngles = {
+      champion: (-Math.PI / 2) + Math.PI * 2 * (30 / 360),
+      es: (-Math.PI / 2) + Math.PI * 2 * (90 / 360),
+      dm: (-Math.PI / 2) + Math.PI * 2 * (210 / 360),
+      other: (-Math.PI / 2) + Math.PI * 2 * (300 / 360)
+    };
+
+    const roleConfig = {
+      PC:    { length: 14, width: 1.2, color: '#94a3b8', dash: [3, 3], tipRadius: 3, tipFill: false },
+      C:     { length: 20, width: 2.2, color: '#6366f1', dash: [], tipRadius: 3.5, tipFill: true },
+      PES:   { length: 17, width: 1.6, color: '#f59e0b', dash: [3, 3], tipRadius: 3, tipFill: false },
+      ES:    { length: 22, width: 2.8, color: '#ca8a04', dash: [], tipRadius: 4, tipFill: true },
+      UDM:   { length: 20, width: 2, color: '#94a3b8', dash: [3, 3], tipRadius: 3, tipFill: false },
+      DM:    { length: 28, width: 3.5, color: '#15803d', dash: [], tipRadius: 5, tipFill: true },
+      OTHER: { length: 12, width: 1, color: '#64748b', dash: [2, 2], tipRadius: 2.5, tipFill: false }
+    };
+
+    const branchStartR = this.boundaryRadius + 2;
+
+    Object.entries(groups).forEach(([pos, members]) => {
+      if (!members.length) return;
+      const baseAngle = groupAngles[pos];
+      const spread = Math.PI / 10;
+
+      members.forEach((s, i) => {
+        const offset = members.length === 1 ? 0 : (i / (members.length - 1) - 0.5) * spread * 2;
+        const angle = baseAngle + offset;
+        const cfg = roleConfig[s.role] || roleConfig.OTHER;
+
+        const startX = this.cx + branchStartR * Math.cos(angle);
+        const startY = this.cy + branchStartR * Math.sin(angle);
+        const endX = this.cx + (branchStartR + cfg.length) * Math.cos(angle);
+        const endY = this.cy + (branchStartR + cfg.length) * Math.sin(angle);
+
+        // v3a: curve amplitude scales with complexity
+        const ctrlOffset = cfg.length * this.branchAmplitude;
+        const perpAngle = angle + Math.PI / 2;
+        const ctrlX = (startX + endX) / 2 + ctrlOffset * Math.cos(perpAngle) * (i % 2 ? 1 : -1);
+        const ctrlY = (startY + endY) / 2 + ctrlOffset * Math.sin(perpAngle) * (i % 2 ? 1 : -1);
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
+        ctx.strokeStyle = cfg.color; ctx.lineWidth = cfg.width;
+        ctx.setLineDash(cfg.dash); ctx.lineCap = 'round'; ctx.stroke(); ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.arc(endX, endY, cfg.tipRadius, 0, Math.PI * 2);
+        if (cfg.tipFill) { ctx.fillStyle = cfg.color; ctx.fill(); }
+        else { ctx.strokeStyle = cfg.color; ctx.lineWidth = 1.5; ctx.stroke(); }
+
+        if (s.role !== 'OTHER') {
+          ctx.font = '8px Inter, sans-serif';
+          ctx.fillStyle = 'rgba(255,255,255,0.35)';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const labelR = branchStartR + cfg.length + cfg.tipRadius + 7;
+          ctx.fillText(s.role, this.cx + labelR * Math.cos(angle), this.cy + labelR * Math.sin(angle));
+        }
+      });
+    });
+  }
+
+  drawDimLabels() {
+    const ctx = this.ctx;
+    const labels = ['Pain', 'Power', 'Vision', 'Value', 'Change', 'Control'];
+    const labelR = this.maxRadius + 16;
+    ctx.font = '9px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    labels.forEach((label, i) => {
+      const angle = this.armAngles[i];
+      const x = this.cx + labelR * Math.cos(angle);
+      const y = this.cy + labelR * Math.sin(angle);
+      const score = this.latestRun[this.dims[i]];
+      ctx.fillStyle = scoreColorAlpha(score, 0.7);
+      ctx.fillText(`${label} (${score})`, x, y);
+    });
+
+    ctx.font = '11px Inter, sans-serif'; ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'center';
+    ctx.fillText(this.deal.deal_stage.toUpperCase(), this.cx, this.cy + this.maxRadius + 34);
+
+    ctx.font = 'bold 13px Inter, sans-serif';
+    const total = this.latestRun.total;
+    ctx.fillStyle = total >= 22 ? '#34d399' : total >= 15 ? '#fcd34d' : total >= 8 ? '#fbbf24' : '#fca5a5';
+    ctx.fillText(`${total}/30`, this.cx, this.cy + this.maxRadius + 48);
+
+    ctx.font = '9px Inter, sans-serif'; ctx.fillStyle = '#64748b';
+    ctx.fillText(`complexity: ${this.complexityScore}/15 (fractal L${this.fractalLevel})`, this.cx, this.cy + this.maxRadius + 62);
+  }
+}
+
+// ====================================================================
+// INIT + ANIMATE
+// ====================================================================
+const renderers = [
+  new MandalaRenderer('c-simple', SIMPLE),
+  new MandalaRenderer('c-moderate', MODERATE),
+  new MandalaRenderer('c-complex', COMPLEX)
+];
+
+function setBadge(id, deal) {
+  const latest = deal.scoring_runs[deal.scoring_runs.length - 1];
+  const badge = document.getElementById(id);
+  const colors = totalBadgeColor(latest.total);
+  badge.style.background = colors.bg; badge.style.color = colors.text;
+  badge.textContent = `${latest.total}/30`;
+}
+setBadge('badge-simple', SIMPLE);
+setBadge('badge-moderate', MODERATE);
+setBadge('badge-complex', COMPLEX);
+
+function animate(timestamp) {
+  const t = timestamp / 1000;
+  renderers.forEach(r => r.render(t));
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+// Fractal legend
+(function drawFractalLegend() {
+  const container = document.getElementById('fractal-legend');
+  const levels = [
+    { level: 0, label: 'L0: Smooth' },
+    { level: 1, label: 'L1: Slight' },
+    { level: 2, label: 'L2: Textured' },
+    { level: 3, label: 'L3: Intricate' },
+    { level: 4, label: 'L4: Ornate' }
+  ];
+  levels.forEach(({ level, label }) => {
+    const div = document.createElement('div');
+    div.className = 'fractal-example';
+    const c = document.createElement('canvas');
+    c.width = 80; c.height = 50;
+    div.appendChild(c);
+    const span = document.createElement('span');
+    span.textContent = label;
+    div.appendChild(span);
+    container.appendChild(div);
+    const ctx = c.getContext('2d');
+    const cx = 40, cy = 40, r = 30;
+    const startA = -Math.PI * 0.7, endA = -Math.PI * 0.3;
+    const pts = fractalArcPoints(cx, cy, r, startA, endA, level);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.lineTo(cx + (r - 10) * Math.cos(endA), cy + (r - 10) * Math.sin(endA));
+    for (let i = 10; i >= 0; i--) {
+      const t = i / 10;
+      const a = startA + t * (endA - startA);
+      ctx.lineTo(cx + (r - 10) * Math.cos(a), cy + (r - 10) * Math.sin(a));
+    }
+    ctx.closePath(); ctx.fillStyle = 'rgba(99,102,241,0.2)'; ctx.fill();
+  });
+})();
+</script>
+</body>
+</html>

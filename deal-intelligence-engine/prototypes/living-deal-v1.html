@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Track 3 — The Living Deal v1</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a14; color: #e2e8f0;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 30px 20px 60px;
+  }
+  h1 { font-size: 26px; font-weight: 700; color: #f8fafc; margin-bottom: 4px; letter-spacing: -0.5px; }
+  .subtitle { font-size: 14px; color: #64748b; margin-bottom: 36px; font-weight: 300; }
+  .stage-row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-bottom: 40px; align-items: flex-start; }
+  .stage-card { display: flex; flex-direction: column; align-items: center; }
+  .stage-card canvas { border-radius: 12px; cursor: crosshair; }
+  .stage-label { margin-top: 10px; text-align: center; }
+  .stage-label .name { font-size: 14px; font-weight: 700; color: #f8fafc; }
+  .stage-label .meta { font-size: 11px; color: #475569; margin-top: 3px; }
+  .stage-label .score { display: inline-block; margin-top: 5px; padding: 3px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; }
+  .arrow { color: #1e293b; font-size: 28px; align-self: center; margin-top: -30px; }
+
+  .tt {
+    position: absolute; pointer-events: none; opacity: 0;
+    background: rgba(10,10,20,0.96); border: 1px solid #334155;
+    border-radius: 10px; padding: 12px 16px; font-size: 11px;
+    color: #cbd5e1; max-width: 260px; transition: opacity 0.12s;
+    z-index: 10; line-height: 1.6; backdrop-filter: blur(8px);
+  }
+  .tt.visible { opacity: 1; }
+  .tt strong { color: #f8fafc; }
+  .tt .dim-color { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+  .legend-bar {
+    max-width: 1400px; width: 100%; display: flex; flex-wrap: wrap; gap: 20px;
+    justify-content: center; margin-bottom: 32px; padding: 16px 24px;
+    background: rgba(30,41,59,0.3); border-radius: 10px; border: 1px solid #1e293b;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #94a3b8; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+  .notice {
+    max-width: 1400px; width: 100%; background: #0f172a;
+    border: 1px solid #1e293b; border-radius: 12px; padding: 20px 28px;
+  }
+  .notice h2 { font-size: 15px; font-weight: 700; color: #94a3b8; margin-bottom: 12px; }
+  .notice ul { list-style: none; padding: 0; }
+  .notice li { font-size: 12px; color: #cbd5e1; padding: 5px 0 5px 18px; position: relative; line-height: 1.5; }
+  .notice li::before { content: '\2022'; position: absolute; left: 0; color: #6366f1; font-size: 14px; top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Track 3 &mdash; The Living Deal</h1>
+<p class="subtitle">Every signal encoded. Watch it grow.</p>
+
+<div class="legend-bar">
+  <div class="legend-item"><span class="legend-swatch" style="background:#ef4444"></span> Pain</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#3b82f6"></span> Power</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#8b5cf6"></span> Vision</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span> Value</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span> Change</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#06b6d4"></span> Control</div>
+  <div class="legend-item" style="margin-left:16px; border-left: 1px solid #334155; padding-left:16px;"><span style="width:12px;height:2px;background:#f59e0b;display:inline-block;border-radius:1px;"></span> Stakeholder arc</div>
+  <div class="legend-item"><span style="width:12px;height:3px;background:rgba(255,255,255,0.15);display:inline-block;border-radius:1px;"></span> Expected boundary</div>
+  <div class="legend-item"><span style="width:12px;height:12px;border:1.5px dashed #475569;display:inline-block;border-radius:50%;"></span> DAP ring</div>
+</div>
+
+<div class="stage-row">
+  <div class="stage-card">
+    <canvas id="c1" width="480" height="480"></canvas>
+    <div id="tt1" class="tt"></div>
+    <div class="stage-label">
+      <div class="name">Week 2 &mdash; Seed</div>
+      <div class="meta">Discover &middot; 1 PC &middot; 12 docs &middot; $285K</div>
+      <span class="score" id="b1"></span>
+    </div>
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="stage-card">
+    <canvas id="c2" width="480" height="480"></canvas>
+    <div id="tt2" class="tt"></div>
+    <div class="stage-label">
+      <div class="name">Week 8 &mdash; Growing</div>
+      <div class="meta">Prove &middot; 3 stakeholders &middot; 95 docs &middot; $285K</div>
+      <span class="score" id="b2"></span>
+    </div>
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="stage-card">
+    <canvas id="c3" width="480" height="480"></canvas>
+    <div id="tt3" class="tt"></div>
+    <div class="stage-label">
+      <div class="name">Week 14 &mdash; Mature</div>
+      <div class="meta">Negotiate &middot; 5 stakeholders &middot; 240 docs &middot; $285K</div>
+      <span class="score" id="b3"></span>
+    </div>
+  </div>
+</div>
+
+<div class="notice">
+  <h2>What to look for</h2>
+  <ul>
+    <li><strong>Bars grow like vines:</strong> Each radial bar is a scoring period. Taller = higher score. Thicker = more documents/activity feeding that dimension. They accumulate outward like growth rings.</li>
+    <li><strong>Score drops are visible:</strong> When Pain drops from 3 to 2, the bar literally gets shorter in that ring. You see the dip in the silhouette — a notch, a recession. Climbs create peaks.</li>
+    <li><strong>Color intensity = confidence:</strong> Low activity dims produce muted, translucent bars. High activity (lots of emails, calls, docs) produces vivid, saturated bars. You can feel which dimensions have real evidence behind them.</li>
+    <li><strong>Stakeholder arcs:</strong> Curved lines connect stakeholder nodes (outer ring) to the dimensions they influence. More connections = more arcs crossing the space. Champion-to-Pain is a thick bright arc. PC-to-Power might be thin and dashed.</li>
+    <li><strong>Time-at-level bands:</strong> If a dimension sits at score 3 for 4 weeks, you see 4 consecutive bars at the same height — a plateau band. Rapid climbs create staircase patterns.</li>
+    <li><strong>DAP boundary:</strong> The dashed ring shows DAP progress. If the deal is moving faster than the plan, bars extend beyond it. If stalling, the boundary sits ahead of the growth.</li>
+    <li><strong>Week 2 is sparse and delicate.</strong> Week 14 is dense, intricate, and alive. The difference should be visceral.</li>
+  </ul>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// DIMENSION CONFIG
+// ═══════════════════════════════════════════════════════
+const DIMS = ['pain','power','vision','value','change','control'];
+const DIM_LABELS = ['Pain','Power','Vision','Value','Change','Control'];
+const DIM_COLORS = {
+  pain:   { h: '#ef4444', rgb: [239,68,68],   hsl: [0,84,60] },
+  power:  { h: '#3b82f6', rgb: [59,130,246],  hsl: [217,91,60] },
+  vision: { h: '#8b5cf6', rgb: [139,92,246],  hsl: [258,90,66] },
+  value:  { h: '#f59e0b', rgb: [245,158,11],  hsl: [38,92,50] },
+  change: { h: '#22c55e', rgb: [34,197,94],   hsl: [142,71,45] },
+  control:{ h: '#06b6d4', rgb: [6,182,212],   hsl: [189,94,43] }
+};
+
+const ROLE_STYLE = {
+  PC:  { color:'#94a3b8', width:1.2, dash:[4,4], tipR:3.5, fill:false },
+  C:   { color:'#6366f1', width:2.5, dash:[],    tipR:5,   fill:true },
+  PES: { color:'#f59e0b', width:1.5, dash:[4,4], tipR:4,   fill:false },
+  ES:  { color:'#ca8a04', width:2.8, dash:[],    tipR:5.5, fill:true },
+  UDM: { color:'#94a3b8', width:1.8, dash:[3,3], tipR:4,   fill:false },
+  DM:  { color:'#15803d', width:3.5, dash:[],    tipR:7,   fill:true },
+  OTHER:{ color:'#475569', width:1,   dash:[2,3], tipR:3,   fill:false }
+};
+
+// ═══════════════════════════════════════════════════════
+// DEAL DATA — 3 snapshots of Acme Health
+// Each snapshot has scoring_history (array of weekly scores),
+// stakeholders, doc counts per dim, total docs, DAP state
+// ═══════════════════════════════════════════════════════
+
+const STAGE_1 = {
+  name: 'Acme Health', value: 285000, stage: 'Discover', total: 7,
+  weeks: [
+    { pain:1, power:0, vision:1, value:0, change:0, control:0, docs:{pain:3,power:1,vision:2,value:1,change:0,control:0}, emails:2, calls:0 },
+    { pain:1, power:1, vision:2, value:1, change:1, control:1, docs:{pain:5,power:2,vision:4,value:2,change:1,control:1}, emails:4, calls:1 },
+  ],
+  stakeholders: [
+    { name:'Sarah Chen', title:'CISO', role:'PC', confirmed:false, dims:['pain','vision','value'], activity:3 }
+  ],
+  dap: { exists:false, agreed:false, progress:0, total:14 },
+  pe_sponsor: 0, totalDocs: 12
+};
+
+const STAGE_2 = {
+  name: 'Acme Health', value: 285000, stage: 'Prove', total: 19,
+  weeks: [
+    { pain:1, power:0, vision:1, value:0, change:0, control:0, docs:{pain:3,power:1,vision:2,value:1,change:0,control:0}, emails:2, calls:0 },
+    { pain:1, power:1, vision:2, value:1, change:1, control:1, docs:{pain:5,power:2,vision:4,value:2,change:1,control:1}, emails:4, calls:1 },
+    { pain:2, power:1, vision:2, value:2, change:1, control:1, docs:{pain:4,power:2,vision:3,value:3,change:2,control:1}, emails:5, calls:1 },
+    { pain:3, power:2, vision:3, value:2, change:2, control:2, docs:{pain:6,power:4,vision:5,value:3,change:3,control:3}, emails:7, calls:2 },
+    { pain:3, power:2, vision:3, value:2, change:2, control:2, docs:{pain:2,power:1,vision:2,value:1,change:1,control:1}, emails:3, calls:0 },
+    { pain:2, power:1, vision:2, value:2, change:1, control:2, docs:{pain:1,power:0,vision:1,value:1,change:0,control:0}, emails:1, calls:0 },
+    { pain:3, power:2, vision:3, value:3, change:2, control:3, docs:{pain:5,power:3,vision:4,value:4,change:3,control:3}, emails:6, calls:2 },
+    { pain:4, power:2, vision:4, value:3, change:3, control:3, docs:{pain:7,power:3,vision:6,value:5,change:4,control:3}, emails:8, calls:2 },
+  ],
+  stakeholders: [
+    { name:'Sarah Chen', title:'CISO', role:'C', confirmed:true, dims:['pain','vision','value','control','change'], activity:12 },
+    { name:'Mike Torres', title:'CEO', role:'PES', confirmed:false, dims:['power','value','change'], activity:5 },
+    { name:'Board Chair', title:'Board', role:'UDM', confirmed:false, dims:['power'], activity:2 }
+  ],
+  dap: { exists:true, agreed:true, progress:7, total:14 },
+  pe_sponsor: 3, totalDocs: 95
+};
+
+const STAGE_3 = {
+  name: 'Acme Health', value: 285000, stage: 'Negotiate', total: 26,
+  weeks: [
+    { pain:1, power:0, vision:1, value:0, change:0, control:0, docs:{pain:3,power:1,vision:2,value:1,change:0,control:0}, emails:2, calls:0 },
+    { pain:1, power:1, vision:2, value:1, change:1, control:1, docs:{pain:5,power:2,vision:4,value:2,change:1,control:1}, emails:4, calls:1 },
+    { pain:2, power:1, vision:2, value:2, change:1, control:1, docs:{pain:4,power:2,vision:3,value:3,change:2,control:1}, emails:5, calls:1 },
+    { pain:3, power:2, vision:3, value:2, change:2, control:2, docs:{pain:6,power:4,vision:5,value:3,change:3,control:3}, emails:7, calls:2 },
+    { pain:3, power:2, vision:3, value:2, change:2, control:2, docs:{pain:2,power:1,vision:2,value:1,change:1,control:1}, emails:3, calls:0 },
+    { pain:2, power:1, vision:2, value:2, change:1, control:2, docs:{pain:1,power:0,vision:1,value:1,change:0,control:0}, emails:1, calls:0 },
+    { pain:3, power:2, vision:3, value:3, change:2, control:3, docs:{pain:5,power:3,vision:4,value:4,change:3,control:3}, emails:6, calls:2 },
+    { pain:4, power:2, vision:4, value:3, change:3, control:3, docs:{pain:7,power:3,vision:6,value:5,change:4,control:3}, emails:8, calls:2 },
+    { pain:4, power:3, vision:4, value:4, change:3, control:3, docs:{pain:5,power:5,vision:4,value:4,change:3,control:3}, emails:6, calls:2 },
+    { pain:5, power:3, vision:5, value:4, change:3, control:4, docs:{pain:6,power:4,vision:5,value:5,change:3,control:4}, emails:7, calls:3 },
+    { pain:5, power:3, vision:5, value:4, change:4, control:4, docs:{pain:4,power:3,vision:4,value:3,change:4,control:3}, emails:5, calls:2 },
+    { pain:5, power:4, vision:5, value:4, change:4, control:4, docs:{pain:5,power:6,vision:4,value:4,change:4,control:5}, emails:8, calls:3 },
+    { pain:5, power:4, vision:5, value:5, change:4, control:4, docs:{pain:3,power:4,vision:3,value:5,change:3,control:3}, emails:6, calls:2 },
+    { pain:5, power:4, vision:5, value:5, change:5, control:5, docs:{pain:4,power:3,vision:4,value:4,change:5,control:4}, emails:7, calls:3 },
+  ],
+  stakeholders: [
+    { name:'Sarah Chen', title:'CISO', role:'C', confirmed:true, dims:['pain','vision','value','control','change'], activity:22 },
+    { name:'Mike Torres', title:'CEO', role:'ES', confirmed:true, dims:['power','value','change'], activity:14 },
+    { name:'Board Chair', title:'Board', role:'DM', confirmed:true, dims:['power','value'], activity:8 },
+    { name:'Compliance Lead', title:'Compliance', role:'OTHER', confirmed:false, dims:['control','change'], activity:6 },
+    { name:'IT Director', title:'IT', role:'OTHER', confirmed:false, dims:['control','vision'], activity:4 }
+  ],
+  dap: { exists:true, agreed:true, progress:12, total:14 },
+  pe_sponsor: 5, totalDocs: 240
+};
+
+// ═══════════════════════════════════════════════════════
+// RENDERER
+// ═══════════════════════════════════════════════════════
+function seededRng(seed) {
+  let s = seed;
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+class LivingDeal {
+  constructor(canvasId, ttId, deal) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext('2d');
+    this.ttEl = document.getElementById(ttId);
+    this.deal = deal;
+    this.cx = 240; this.cy = 240;
+    this.time = 0;
+    this.hovered = null;
+
+    // Layout radii
+    this.centerR = 16 + Math.sqrt(deal.value / 1000) * 0.6;
+    this.peHaloR = this.centerR + (deal.pe_sponsor > 0 ? 4 + deal.pe_sponsor * 1.5 : 0);
+    this.innerBarStart = this.peHaloR + 10;
+    this.maxBarEnd = 195; // leave room for stakeholders
+    this.stakeRingR = 210;
+    this.dapR = this.maxBarEnd + 6;
+
+    // Precompute bar layout
+    this.barData = this._buildBars();
+    this.stakeNodes = this._buildStakeholders();
+
+    this.canvas.addEventListener('mousemove', e => this._onMouse(e));
+    this.canvas.addEventListener('mouseleave', () => { this.hovered = null; this.ttEl.classList.remove('visible'); });
+  }
+
+  _buildBars() {
+    const weeks = this.deal.weeks;
+    const numWeeks = weeks.length;
+    const availableR = this.maxBarEnd - this.innerBarStart;
+    const ringWidth = Math.min(availableR / numWeeks, 18);
+    const gap = Math.max(1, ringWidth * 0.08);
+
+    // Per dimension: 60-degree sector, with sub-bars per week
+    const sectorAngle = (Math.PI * 2) / 6;
+    const sectorPad = 0.04; // gap between sectors
+    const usableAngle = sectorAngle - sectorPad * 2;
+
+    const bars = [];
+
+    DIMS.forEach((dim, di) => {
+      const baseAngle = (di * sectorAngle) - Math.PI / 2;
+      const sectorStart = baseAngle + sectorPad;
+
+      weeks.forEach((week, wi) => {
+        const score = week[dim];
+        const docs = week.docs[dim] || 0;
+        const totalActivity = week.emails + week.calls;
+
+        // Bar height (radial extent) based on score
+        const maxH = ringWidth - gap;
+        const barH = (score / 5) * maxH;
+        if (barH < 0.5 && score === 0) { bars.push(null); return; }
+
+        // Bar thickness (angular width) based on doc count for this dim
+        const minThick = usableAngle * 0.06;
+        const maxThick = usableAngle / Math.max(numWeeks, 1);
+                const docFactor = Math.min(docs / 8, 1);
+        const thickness = minThick + docFactor * (maxThick - minThick);
+
+        // Position: radial = week ring, angular = within sector
+        const innerR = this.innerBarStart + wi * ringWidth;
+        const outerR = innerR + barH;
+
+        // Distribute bars within sector: spread across weeks
+        const t = numWeeks === 1 ? 0.5 : wi / (numWeeks - 1);
+        const barCenter = sectorStart + usableAngle * 0.1 + t * usableAngle * 0.8;
+        const barStart = barCenter - thickness / 2;
+        const barEnd = barCenter + thickness / 2;
+
+        // Alpha based on activity
+        const activityAlpha = 0.25 + Math.min(totalActivity / 10, 1) * 0.75;
+
+        // Score delta from previous week
+        const prevScore = wi > 0 ? weeks[wi - 1][dim] : 0;
+        const delta = score - prevScore;
+
+        bars.push({
+          dim, di, wi, score, docs, delta,
+          innerR, outerR, barStart, barEnd,
+          activityAlpha, totalActivity,
+          color: DIM_COLORS[dim]
+        });
+      });
+    });
+
+    return bars.filter(Boolean);
+  }
+
+  _buildStakeholders() {
+    const stakes = this.deal.stakeholders;
+    if (!stakes.length) return [];
+
+    return stakes.map((s, i) => {
+      const angle = -Math.PI / 2 + (i / stakes.length) * Math.PI * 2
+        + Math.PI / stakes.length;
+      const cfg = ROLE_STYLE[s.role] || ROLE_STYLE.OTHER;
+      return {
+        s, cfg, angle, i,
+        x: this.cx + this.stakeRingR * Math.cos(angle),
+        y: this.cy + this.stakeRingR * Math.sin(angle)
+      };
+    });
+  }
+
+  render(time) {
+    this.time = time;
+    const c = this.ctx;
+    c.clearRect(0, 0, 480, 480);
+
+    this._drawAmbientGlow();
+    this._drawGridRings();
+    this._drawBars();
+    this._drawDAPBoundary();
+    this._drawCenter();
+    this._drawPEHalo();
+    this._drawStakeholderArcs();
+    this._drawStakeholderNodes();
+    this._drawDimLabels();
+  }
+
+  _drawAmbientGlow() {
+    const c = this.ctx;
+    const total = this.deal.total;
+    const intensity = total / 30;
+
+    // Per-dimension ambient glow in their sector
+    DIMS.forEach((dim, di) => {
+      const col = DIM_COLORS[dim];
+      const lastScore = this.deal.weeks[this.deal.weeks.length - 1][dim];
+      const dimIntensity = lastScore / 5;
+      const sectorAngle = (Math.PI * 2) / 6;
+      const angle = di * sectorAngle - Math.PI / 2;
+
+      const glowR = this.maxBarEnd * 0.7;
+      const gx = this.cx + glowR * 0.3 * Math.cos(angle + sectorAngle / 2);
+      const gy = this.cy + glowR * 0.3 * Math.sin(angle + sectorAngle / 2);
+
+      const gr = c.createRadialGradient(gx, gy, 0, gx, gy, glowR);
+      gr.addColorStop(0, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${0.04 * dimIntensity * intensity})`);
+      gr.addColorStop(1, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0)`);
+      c.beginPath(); c.arc(gx, gy, glowR, 0, Math.PI * 2);
+      c.fillStyle = gr; c.fill();
+    });
+  }
+
+  _drawGridRings() {
+    const c = this.ctx;
+    const weeks = this.deal.weeks.length;
+    const ringWidth = Math.min((this.maxBarEnd - this.innerBarStart) / weeks, 18);
+
+    // Concentric ring guides
+    for (let i = 0; i <= weeks; i++) {
+      const r = this.innerBarStart + i * ringWidth;
+      c.beginPath(); c.arc(this.cx, this.cy, r, 0, Math.PI * 2);
+      c.strokeStyle = `rgba(148,163,184,${i === 0 ? 0.06 : 0.025})`;
+      c.lineWidth = 0.5; c.stroke();
+    }
+
+    // Sector dividers
+    const sectorAngle = (Math.PI * 2) / 6;
+    for (let i = 0; i < 6; i++) {
+      const angle = i * sectorAngle - Math.PI / 2;
+      c.beginPath();
+      c.moveTo(this.cx + this.innerBarStart * Math.cos(angle), this.cy + this.innerBarStart * Math.sin(angle));
+      c.lineTo(this.cx + this.maxBarEnd * Math.cos(angle), this.cy + this.maxBarEnd * Math.sin(angle));
+      c.strokeStyle = 'rgba(148,163,184,0.04)';
+      c.lineWidth = 0.5; c.stroke();
+    }
+  }
+
+  _drawBars() {
+    const c = this.ctx;
+    const hovDim = this.hovered?.type === 'dim' ? this.hovered.dim : null;
+    const hovStake = this.hovered?.type === 'stake' ? this.hovered.idx : null;
+    const hovStakeDims = hovStake !== null ? this.deal.stakeholders[hovStake].dims : [];
+
+    this.barData.forEach(bar => {
+      const lit = bar.dim === hovDim || hovStakeDims.includes(bar.dim);
+      const dimmed = (hovDim || hovStake !== null) && !lit;
+
+      const col = bar.color;
+      let alpha = bar.activityAlpha;
+      if (dimmed) alpha *= 0.08;
+      else if (lit) alpha = Math.min(alpha * 1.3, 1);
+
+      // Score change visual: glow on increases, dim notch on decreases
+      let extraGlow = 0;
+      if (bar.delta >= 2) extraGlow = 0.3;
+      else if (bar.delta >= 1) extraGlow = 0.12;
+      else if (bar.delta <= -2) alpha *= 0.6;
+      else if (bar.delta <= -1) alpha *= 0.8;
+
+      c.save();
+      c.globalAlpha = alpha;
+
+      // Draw the bar as an arc segment
+      c.beginPath();
+      c.arc(this.cx, this.cy, bar.innerR, bar.barStart, bar.barEnd);
+      c.arc(this.cx, this.cy, bar.outerR, bar.barEnd, bar.barStart, true);
+      c.closePath();
+
+      // Gradient: inner edge muted, outer edge vivid
+      const midAngle = (bar.barStart + bar.barEnd) / 2;
+      const gx1 = this.cx + bar.innerR * Math.cos(midAngle);
+      const gy1 = this.cy + bar.innerR * Math.sin(midAngle);
+      const gx2 = this.cx + bar.outerR * Math.cos(midAngle);
+      const gy2 = this.cy + bar.outerR * Math.sin(midAngle);
+      const grad = c.createLinearGradient(gx1, gy1, gx2, gy2);
+      grad.addColorStop(0, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.5)`);
+      grad.addColorStop(1, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},1)`);
+      c.fillStyle = grad;
+      c.fill();
+
+      // Bright edge on outer arc for score jumps
+      if (extraGlow > 0 && !dimmed) {
+        c.beginPath();
+        c.arc(this.cx, this.cy, bar.outerR, bar.barStart, bar.barEnd);
+        c.strokeStyle = `rgba(255,255,255,${extraGlow})`;
+        c.lineWidth = 1.5; c.stroke();
+      }
+
+      // Score decrease: red inner edge
+      if (bar.delta < 0 && !dimmed) {
+        c.beginPath();
+        c.arc(this.cx, this.cy, bar.outerR, bar.barStart, bar.barEnd);
+        c.strokeStyle = `rgba(239,68,68,${Math.abs(bar.delta) * 0.15})`;
+        c.lineWidth = 2; c.stroke();
+      }
+
+      // Subtle outline
+      c.beginPath();
+      c.arc(this.cx, this.cy, bar.innerR, bar.barStart, bar.barEnd);
+      c.arc(this.cx, this.cy, bar.outerR, bar.barEnd, bar.barStart, true);
+      c.closePath();
+      c.strokeStyle = `rgba(255,255,255,0.04)`;
+      c.lineWidth = 0.5; c.stroke();
+
+      c.restore();
+    });
+  }
+
+  _drawDAPBoundary() {
+    const c = this.ctx;
+    const dap = this.deal.dap;
+
+    if (!dap.exists) {
+      // No DAP: faint dashed circle
+      c.beginPath(); c.arc(this.cx, this.cy, this.dapR, 0, Math.PI * 2);
+      c.strokeStyle = 'rgba(71,85,105,0.12)'; c.lineWidth = 1;
+      c.setLineDash([5, 8]); c.stroke(); c.setLineDash([]);
+      return;
+    }
+
+    const progress = dap.progress / dap.total;
+    const endAngle = -Math.PI / 2 + Math.PI * 2 * progress;
+
+    // Background ring
+    c.beginPath(); c.arc(this.cx, this.cy, this.dapR, 0, Math.PI * 2);
+    c.strokeStyle = 'rgba(71,85,105,0.08)'; c.lineWidth = 1.5;
+    c.setLineDash(dap.agreed ? [] : [4, 6]); c.stroke(); c.setLineDash([]);
+
+    // Progress arc
+    c.beginPath(); c.arc(this.cx, this.cy, this.dapR, -Math.PI / 2, endAngle);
+    c.strokeStyle = dap.agreed ? 'rgba(34,197,94,0.6)' : 'rgba(245,158,11,0.5)';
+    c.lineWidth = 2.5; c.setLineDash([]); c.stroke();
+
+    // Milestone ticks
+    for (let i = 0; i < dap.progress; i++) {
+      const tickAngle = -Math.PI / 2 + (i / dap.total) * Math.PI * 2;
+      const inner = this.dapR - 3, outer = this.dapR + 3;
+      c.beginPath();
+      c.moveTo(this.cx + inner * Math.cos(tickAngle), this.cy + inner * Math.sin(tickAngle));
+      c.lineTo(this.cx + outer * Math.cos(tickAngle), this.cy + outer * Math.sin(tickAngle));
+      c.strokeStyle = dap.agreed ? 'rgba(34,197,94,0.4)' : 'rgba(245,158,11,0.3)';
+      c.lineWidth = 1; c.stroke();
+    }
+  }
+
+  _drawCenter() {
+    const c = this.ctx;
+    const total = this.deal.total;
+    const hue = total >= 22 ? 142 : total >= 12 ? 45 : 0;
+
+    // Glow
+    const gr = c.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, this.centerR * 2);
+    gr.addColorStop(0, `hsla(${hue},60%,60%,0.12)`);
+    gr.addColorStop(1, `hsla(${hue},60%,60%,0)`);
+    c.beginPath(); c.arc(this.cx, this.cy, this.centerR * 2, 0, Math.PI * 2);
+    c.fillStyle = gr; c.fill();
+
+    // Core
+    const cg = c.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, this.centerR);
+    cg.addColorStop(0, `hsla(${hue},55%,65%,0.9)`);
+    cg.addColorStop(0.7, `hsla(${hue},45%,35%,0.85)`);
+    cg.addColorStop(1, `hsla(${hue},35%,20%,0.7)`);
+    c.beginPath(); c.arc(this.cx, this.cy, this.centerR, 0, Math.PI * 2);
+    c.fillStyle = cg; c.fill();
+
+    // Total score
+    c.fillStyle = '#f8fafc';
+    c.font = 'bold 14px Inter,sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(total, this.cx, this.cy - 1);
+
+    // Stage label tiny
+    c.font = '7px Inter,sans-serif';
+    c.fillStyle = 'rgba(248,250,252,0.5)';
+    c.fillText(this.deal.stage.toUpperCase(), this.cx, this.cy + 9);
+  }
+
+  _drawPEHalo() {
+    const pe = this.deal.pe_sponsor;
+    if (pe <= 0) return;
+    const c = this.ctx;
+    const r = this.centerR + 4 + pe * 1.2;
+    const alpha = 0.1 + pe * 0.06;
+
+    c.beginPath(); c.arc(this.cx, this.cy, r, 0, Math.PI * 2);
+    c.strokeStyle = `rgba(250,204,21,${alpha})`;
+    c.lineWidth = 1 + pe * 0.4; c.stroke();
+
+    const g = c.createRadialGradient(this.cx, this.cy, this.centerR, this.cx, this.cy, r);
+    g.addColorStop(0, `rgba(250,204,21,${alpha * 0.4})`);
+    g.addColorStop(1, 'rgba(250,204,21,0)');
+    c.beginPath(); c.arc(this.cx, this.cy, r, 0, Math.PI * 2);
+    c.fillStyle = g; c.fill();
+  }
+
+  _drawStakeholderArcs() {
+    const c = this.ctx;
+    const hovStake = this.hovered?.type === 'stake' ? this.hovered.idx : null;
+    const hovDim = this.hovered?.type === 'dim' ? this.hovered.dim : null;
+
+    this.stakeNodes.forEach((sn, si) => {
+      const stake = sn.s;
+      stake.dims.forEach(dim => {
+        const di = DIMS.indexOf(dim);
+        if (di < 0) return;
+
+        const col = DIM_COLORS[dim];
+        const sectorAngle = (Math.PI * 2) / 6;
+        const dimAngle = di * sectorAngle - Math.PI / 2 + sectorAngle / 2;
+
+        // Target point on the bar zone
+        const targetR = (this.innerBarStart + this.maxBarEnd) / 2;
+        const tx = this.cx + targetR * Math.cos(dimAngle);
+        const ty = this.cy + targetR * Math.sin(dimAngle);
+
+        const lit = si === hovStake || dim === hovDim;
+        const dimmed = (hovStake !== null || hovDim) && !lit;
+
+        // Bezier control pulled toward center
+        let a1 = sn.angle, a2 = dimAngle;
+        if (Math.abs(a2 - a1) > Math.PI) { if (a2 > a1) a1 += Math.PI * 2; else a2 += Math.PI * 2; }
+        const mA = (a1 + a2) / 2;
+        const pullR = targetR * 0.35;
+        const cpx = this.cx + pullR * Math.cos(mA);
+        const cpy = this.cy + pullR * Math.sin(mA);
+
+        // Activity-based width
+        const actFactor = Math.min(stake.activity / 15, 1);
+        const baseAlpha = 0.08 + actFactor * 0.18;
+        const alpha = dimmed ? 0.02 : lit ? 0.55 : baseAlpha;
+        const width = dimmed ? 0.5 : lit ? 2.5 : 0.8 + actFactor * 1.2;
+
+        c.beginPath();
+        c.moveTo(sn.x, sn.y);
+        c.quadraticCurveTo(cpx, cpy, tx, ty);
+        c.strokeStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${alpha})`;
+        c.lineWidth = width;
+        c.setLineDash(sn.cfg.dash); c.stroke(); c.setLineDash([]);
+      });
+    });
+  }
+
+  _drawStakeholderNodes() {
+    const c = this.ctx;
+    const hovStake = this.hovered?.type === 'stake' ? this.hovered.idx : null;
+    const hovDim = this.hovered?.type === 'dim' ? this.hovered.dim : null;
+
+    this.stakeNodes.forEach((sn, si) => {
+      const s = sn.s, cfg = sn.cfg;
+      const isH = si === hovStake;
+      const isLinked = hovDim && s.dims.includes(hovDim);
+      const dimmed = (hovStake !== null && !isH) || (hovDim && !isLinked);
+
+      c.save();
+      c.globalAlpha = dimmed ? 0.1 : 1;
+
+      // Activity pulse
+      const actFactor = Math.min(s.activity / 15, 1);
+      if (actFactor > 0.2 && !dimmed) {
+        const pr = cfg.tipR + 3 + Math.sin(this.time * 2.5 + si * 1.7) * 2;
+        const pg = c.createRadialGradient(sn.x, sn.y, cfg.tipR, sn.x, sn.y, pr + 5);
+        pg.addColorStop(0, `rgba(255,255,255,${actFactor * 0.12})`);
+        pg.addColorStop(1, 'rgba(255,255,255,0)');
+        c.beginPath(); c.arc(sn.x, sn.y, pr + 5, 0, Math.PI * 2);
+        c.fillStyle = pg; c.fill();
+      }
+
+      // Node
+      c.beginPath(); c.arc(sn.x, sn.y, cfg.tipR, 0, Math.PI * 2);
+      if (cfg.fill) {
+        c.fillStyle = isH ? '#f8fafc' : cfg.color; c.fill();
+      } else {
+        c.strokeStyle = isH ? '#f8fafc' : cfg.color;
+        c.lineWidth = 1.5;
+        c.setLineDash(s.confirmed ? [] : [2, 2]);
+        c.stroke(); c.setLineDash([]);
+      }
+
+      // Label
+      const lr = this.stakeRingR + cfg.tipR + 10;
+      const lx = this.cx + lr * Math.cos(sn.angle);
+      const ly = this.cy + lr * Math.sin(sn.angle);
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+
+      if (isH) {
+        c.font = '9px Inter,sans-serif'; c.fillStyle = '#f8fafc';
+        c.fillText(s.name, lx, ly - 5);
+        c.font = '7px Inter,sans-serif'; c.fillStyle = 'rgba(148,163,184,0.7)';
+        c.fillText(`${s.role} - ${s.title}`, lx, ly + 5);
+      } else {
+        c.font = '8px Inter,sans-serif';
+        c.fillStyle = `rgba(148,163,184,${dimmed ? 0.1 : 0.45})`;
+        c.fillText(s.role, lx, ly);
+      }
+      c.restore();
+    });
+  }
+
+  _drawDimLabels() {
+    const c = this.ctx;
+    const sectorAngle = (Math.PI * 2) / 6;
+    const lastWeek = this.deal.weeks[this.deal.weeks.length - 1];
+
+    DIMS.forEach((dim, di) => {
+      const angle = di * sectorAngle - Math.PI / 2 + sectorAngle / 2;
+      const col = DIM_COLORS[dim];
+      const score = lastWeek[dim];
+      const r = this.innerBarStart - 6;
+
+      const x = this.cx + r * Math.cos(angle);
+      const y = this.cy + r * Math.sin(angle);
+
+      c.save();
+      c.translate(x, y);
+      // Rotate label to follow the angle, but keep readable
+      let labelAngle = angle + Math.PI / 2;
+      if (angle > Math.PI / 2 && angle < Math.PI * 1.5) {
+        labelAngle += Math.PI;
+      }
+      c.rotate(labelAngle);
+
+      c.font = '8px Inter,sans-serif';
+      c.fillStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.6)`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(`${DIM_LABELS[di]}`, 0, 0);
+      c.restore();
+
+      // Score number near outer edge
+      const sr = this.maxBarEnd + 1;
+      const sx = this.cx + sr * Math.cos(angle);
+      const sy = this.cy + sr * Math.sin(angle);
+      c.font = 'bold 9px Inter,sans-serif';
+      c.fillStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.7)`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(score, sx, sy);
+    });
+  }
+
+  // ─── HOVER ───
+  _onMouse(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (480 / rect.width);
+    const my = (e.clientY - rect.top) * (480 / rect.height);
+    let found = null;
+
+    // Check stakeholders
+    for (let i = 0; i < this.stakeNodes.length; i++) {
+      const sn = this.stakeNodes[i];
+      const dx = mx - sn.x, dy = my - sn.y;
+      if (dx * dx + dy * dy < (sn.cfg.tipR + 8) ** 2) {
+        found = { type: 'stake', idx: i }; break;
+      }
+    }
+
+    // Check center
+    if (!found) {
+      const dx = mx - this.cx, dy = my - this.cy;
+      if (dx * dx + dy * dy < (this.centerR + 5) ** 2) {
+        found = { type: 'center' };
+      }
+    }
+
+    // Check dimension sectors
+    if (!found) {
+      const dx = mx - this.cx, dy = my - this.cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > this.innerBarStart && dist < this.maxBarEnd + 10) {
+        let angle = Math.atan2(dy, dx);
+        if (angle < -Math.PI / 2) angle += Math.PI * 2;
+        const shifted = angle + Math.PI / 2;
+        const sector = Math.floor(((shifted % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2 / 6));
+        if (sector >= 0 && sector < 6) {
+          found = { type: 'dim', dim: DIMS[sector], idx: sector };
+        }
+      }
+    }
+
+    this.hovered = found;
+
+    if (found) {
+      let html = '';
+      if (found.type === 'stake') {
+        const s = this.deal.stakeholders[found.idx];
+        html = `<strong>${s.name}</strong><br>
+          <span style="color:#94a3b8">${s.role} &middot; ${s.title}</span><br>
+          <span style="color:#64748b;font-size:10px">Activity: ${s.activity} interactions</span><br>
+          <span style="color:#64748b;font-size:10px">Influences: ${s.dims.map(d => {
+            const col = DIM_COLORS[d];
+            return `<span class="dim-color" style="background:${col.h}"></span>${d[0].toUpperCase()+d.slice(1)}`;
+          }).join(', ')}</span>`;
+      } else if (found.type === 'dim') {
+        const dim = found.dim;
+        const col = DIM_COLORS[dim];
+        const weeks = this.deal.weeks;
+        const scores = weeks.map(w => w[dim]);
+        const docs = weeks.reduce((sum, w) => sum + (w.docs[dim] || 0), 0);
+        const current = scores[scores.length - 1];
+        const peak = Math.max(...scores);
+        const low = Math.min(...scores);
+        const trend = scores.length > 1 ? scores[scores.length - 1] - scores[scores.length - 2] : 0;
+        html = `<span class="dim-color" style="background:${col.h}"></span>
+          <strong>${DIM_LABELS[found.idx]}</strong><br>
+          <span style="font-size:14px;font-weight:800;color:${col.h}">${current}/5</span>
+          <span style="color:#64748b;font-size:10px">${trend > 0 ? '(+'+trend+')' : trend < 0 ? '('+trend+')' : '(=)'}</span><br>
+          <span style="color:#64748b;font-size:10px">Range: ${low}-${peak} &middot; ${docs} docs</span><br>
+          <span style="color:#64748b;font-size:10px">History: ${scores.join(' > ')}</span>`;
+      } else {
+        html = `<strong>${this.deal.name}</strong><br>
+          <span style="font-size:15px;font-weight:800">${this.deal.total}/30</span><br>
+          <span style="color:#94a3b8;font-size:10px">${this.deal.stage} &middot; $${Math.round(this.deal.value/1000)}K &middot; ${this.deal.totalDocs} docs</span><br>
+          <span style="color:#64748b;font-size:10px">PE Sponsor: ${this.deal.pe_sponsor}/5 &middot; DAP: ${this.deal.dap.progress}/${this.deal.dap.total}</span>`;
+      }
+      this.ttEl.innerHTML = html;
+      const px = Math.min(e.offsetX + 14, 300);
+      const py = Math.max(e.offsetY - 10, 10);
+      this.ttEl.style.left = px + 'px';
+      this.ttEl.style.top = py + 'px';
+      this.ttEl.classList.add('visible');
+    } else {
+      this.ttEl.classList.remove('visible');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+const stages = [STAGE_1, STAGE_2, STAGE_3];
+const renderers = [];
+
+stages.forEach((deal, i) => {
+  const r = new LivingDeal(`c${i+1}`, `tt${i+1}`, deal);
+  renderers.push(r);
+
+  const badge = document.getElementById(`b${i+1}`);
+  const t = deal.total;
+  badge.style.background = t >= 22 ? '#064e3b' : t >= 15 ? '#1c2a15' : t >= 8 ? '#422006' : '#450a0a';
+  badge.style.color = t >= 22 ? '#34d399' : t >= 15 ? '#86efac' : t >= 8 ? '#fcd34d' : '#fca5a5';
+  badge.textContent = `${t}/30`;
+});
+
+function animate(ts) {
+  const t = ts / 1000;
+  renderers.forEach(r => r.render(t));
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

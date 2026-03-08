@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS deals (
     sender_domains      TEXT[],                          -- ["acmehospital.org", "acme.com"]
     salesforce_opp_id   VARCHAR(64),                    -- e.g. "006Dn000001abc"
     salesforce_stage    VARCHAR(128),                   -- e.g. "Prove | 3B: Document Approach"
+    salesforce_account_id   VARCHAR(18),
+    salesforce_account_name VARCHAR(255),
+    salesforce_opp_name     VARCHAR(255),
     deal_stage          VARCHAR(64),                    -- discover/qualify/prove/negotiate/close
     deal_value_usd      NUMERIC(12,2),
     close_date          DATE,
@@ -48,7 +51,13 @@ CREATE TABLE IF NOT EXISTS ingestion_log (
     qdrant_namespace    VARCHAR(128),
     ingested_at         TIMESTAMPTZ DEFAULT NOW(),
     confirmed_at        TIMESTAMPTZ,
-    confirmed_by        VARCHAR(128) DEFAULT 'austin'
+    confirmed_by        VARCHAR(128) DEFAULT 'austin',
+    classification_reasoning TEXT,
+    classification_feedback TEXT,
+    doc_type_override   VARCHAR(64),
+    deal_id_override    VARCHAR(128),
+    feedback_status     VARCHAR(32) DEFAULT NULL,
+    feedback_at         TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_log_deal_id ON ingestion_log(deal_id);
@@ -177,7 +186,9 @@ CREATE TABLE IF NOT EXISTS outputs_log (
     sent_at             TIMESTAMPTZ DEFAULT NOW(),
     triggered_by        VARCHAR(128),           -- 'chat_agent' / 'scheduled' / 'auto'
     gmail_message_id    VARCHAR(255),           -- Gmail send confirmation ID
-    status              VARCHAR(32) DEFAULT 'sent'  -- sent/draft/failed
+    status              VARCHAR(32) DEFAULT 'sent', -- sent/draft/failed
+    original_content    TEXT,                       -- AI's original draft before Austin's edits
+    dismiss_reason      VARCHAR(500)                -- Why Austin dismissed (Wrong focus, Bad timing, etc. + free-text detail)
 );
 
 CREATE INDEX IF NOT EXISTS idx_outputs_deal_id ON outputs_log(deal_id);
@@ -364,6 +375,7 @@ CREATE INDEX IF NOT EXISTS idx_workstreams_pricing ON deal_workstreams(pricing_s
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE deals ADD COLUMN IF NOT EXISTS hold_until DATE;
 ALTER TABLE deals ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Deal_health table additions (Phase 5: key objectives + workstream inference)
@@ -385,6 +397,9 @@ SELECT DISTINCT ON (deal_id)
     dh.*,
     d.company_name,
     d.salesforce_opp_id,
+    d.salesforce_account_id,
+    d.salesforce_account_name,
+    d.salesforce_opp_name,
     d.deal_value_usd,
     d.forecast_category AS deal_forecast
 FROM deal_health dh
@@ -429,3 +444,102 @@ LEFT JOIN v_deal_health_latest dh ON dh.deal_id = d.deal_id
 WHERE d.is_active = TRUE
 GROUP BY d.deal_stage, d.forecast_category
 ORDER BY d.deal_stage;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- WORKFLOW_ERRORS — Production error logging for all n8n workflows
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS workflow_errors (
+    id                  SERIAL PRIMARY KEY,
+    workflow_id         VARCHAR(50) NOT NULL,
+    workflow_name       VARCHAR(100),
+    node_name           VARCHAR(200),
+    error_message       TEXT,
+    execution_id        VARCHAR(50),
+    deal_id             VARCHAR(100),
+    severity            VARCHAR(20) DEFAULT 'error',
+    acknowledged        BOOLEAN DEFAULT FALSE,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    metadata            JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_errors_workflow ON workflow_errors(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_errors_created ON workflow_errors(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_errors_severity ON workflow_errors(severity);
+CREATE INDEX IF NOT EXISTS idx_workflow_errors_unacked ON workflow_errors(acknowledged) WHERE acknowledged = FALSE;
+
+-- Unacknowledged errors (for Metabase + UI)
+CREATE OR REPLACE VIEW v_active_errors AS
+SELECT
+    id, workflow_name, node_name, error_message,
+    deal_id, severity, created_at, metadata
+FROM workflow_errors
+WHERE acknowledged = FALSE
+ORDER BY created_at DESC;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AGENT_TRACES — Per-message observability for AI agent interactions
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS agent_traces (
+    id                  SERIAL PRIMARY KEY,
+    session_id          VARCHAR(255) NOT NULL,
+    message_id          VARCHAR(255),
+    deal_id             VARCHAR(128),
+    user_input          TEXT NOT NULL,
+    agent_output        TEXT,
+    think_steps         JSONB,
+    tool_calls          JSONB,
+    rag_chunks          JSONB,
+    prompt_tokens       INTEGER,
+    completion_tokens   INTEGER,
+    total_tokens        INTEGER,
+    total_duration_ms   INTEGER,
+    iteration_count     INTEGER,
+    tools_called_count  INTEGER,
+    status              VARCHAR(32) DEFAULT 'success',
+    error_message       TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_traces_session ON agent_traces(session_id);
+CREATE INDEX IF NOT EXISTS idx_traces_deal ON agent_traces(deal_id);
+CREATE INDEX IF NOT EXISTS idx_traces_created ON agent_traces(created_at DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DEAL_NOTIFICATIONS — In-app notifications for deal events and alerts
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS deal_notifications (
+    id                  SERIAL PRIMARY KEY,
+    deal_id             VARCHAR(128) NOT NULL,
+    notification_type   VARCHAR(64) NOT NULL,
+    summary             TEXT NOT NULL,
+    context             JSONB NOT NULL DEFAULT '{}',
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    read_at             TIMESTAMPTZ,
+    dismissed_at        TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_deal_notifications_unread
+    ON deal_notifications (deal_id)
+    WHERE read_at IS NULL;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- INTERNAL_KNOWLEDGE — Curated internal knowledge base entries (non-deal docs)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS internal_knowledge (
+    id              SERIAL PRIMARY KEY,
+    title           VARCHAR(500) NOT NULL,
+    category        VARCHAR(50) NOT NULL,
+    tags            TEXT[] DEFAULT '{}',
+    summary         TEXT,
+    source_type     VARCHAR(20),
+    source_ref      TEXT,
+    original_deal_id VARCHAR(128),
+    original_subject TEXT,
+    message_id      VARCHAR(255),
+    qdrant_point_ids TEXT[] DEFAULT '{}',
+    chunk_count     INTEGER DEFAULT 1,
+    reference_count INTEGER DEFAULT 0,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    is_deleted      BOOLEAN DEFAULT FALSE
+);

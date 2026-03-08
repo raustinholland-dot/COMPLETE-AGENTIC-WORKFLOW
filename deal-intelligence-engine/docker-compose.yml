@@ -6,7 +6,9 @@ services:
   # ─────────────────────────────────────────────
   n8n:
     platform: linux/amd64
-    image: n8nio/n8n:2.9.4
+    build:
+      context: ./n8n
+      dockerfile: Dockerfile
     container_name: clearwater-n8n
     restart: unless-stopped
     ports:
@@ -26,10 +28,13 @@ services:
       - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
       - N8N_BINARY_DATA_STORAGE_PATH=/home/node/.n8n/binaryData
       - EXECUTIONS_DATA_SAVE_ON_ERROR=all
-      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=last
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
       - EXECUTIONS_DATA_MAX_AGE=168
       - N8N_LOG_LEVEL=info
       - GENERIC_TIMEZONE=America/New_York
+      # Allow adm-zip in Code nodes for PPTX extraction
+      - NODE_FUNCTION_ALLOW_EXTERNAL=adm-zip
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
       # API Keys (set in .env)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -39,6 +44,12 @@ services:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/home/node/.n8n/workflows
       - ./templates:/home/node/.n8n/templates
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +73,12 @@ services:
       - ./qdrant/config.yaml:/qdrant/config/production.yaml
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c 'echo > /dev/tcp/localhost/6333' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - clearwater-net
 
@@ -132,6 +149,12 @@ services:
       - MB_DB_PASS=${POSTGRES_PASSWORD}
       - MB_SITE_NAME=Clearwater Deal Intelligence
       - JAVA_TIMEZONE=America/New_York
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy

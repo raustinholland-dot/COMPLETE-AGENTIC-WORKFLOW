@@ -1,108 +1,61 @@
 # Clearwater Deal Intelligence Engine — Testing Guide
 
-**Phases 1–5**: Ingestion, Deal Health, Output Gen, Chat Agent, AD Tracker
-**Version**: 5.0
-**Last Updated**: March 2, 2026
-**Test Deal**: Velentium (velentium.com) — real active deal
+**Phases 1-5**: Ingestion, Deal Health, Output Gen, Chat Agent, AD Tracker
+**Version**: 6.0
+**Last Updated**: March 5, 2026
+**Test Deal**: Velentium Medical (velentiummedical.com) — real active deal
 
 ---
 
-## Next Session — Start Here (2026-03-02)
+## Full Deal Lifecycle Test — Velentium (Real Data)
 
-**DO NOT wipe the system.** 4 pending drafts exist in `outputs_log` needed for approve flow testing.
+**Purpose:** Test the complete deal cycle end-to-end using real Velentium artifacts in chronological order. After each ingestion + scoring event, Austin interacts with the chat agent to generate outputs (follow-up emails, pricing requests, etc.), reviews them in the Draft Editor, and approves them. This tests the full loop: ingestion -> scoring -> output generation -> approval -> next artifact.
 
-### Current System State
-- `deals`: 1 row — `cw_velentiummedical_2026`, stage=Discover, is_active=true
-- `ingestion_log`: 2 rows — 1 calendar_invite + 1 transcript (8 chunks)
-- `deal_health`: 2 rows — calendar_only zero-score + real Opus score (15/30, CAS=2A)
-- `outputs_log`: 4 rows, all status='draft' — pricing_request (ID:1), follow_up_email (ID:2), internal_team_update (ID:3), internal_team_update (ID:4)
-- `attribution_queue`: 0 rows (clean)
-- Qdrant: vectors present for Velentium transcript
-- Chat widget: surfacing all 4 drafts correctly on session start ✓
+**Test Deal:** Velentium Medical (velentiummedical.com)
+**Real Data Source:** `deal-intelligence-engine/backfill/velentium/`
 
-### Tests 1, 1a, 2, 3: COMPLETE ✓
-All passed cleanly on 2026-03-02. Do not re-run unless system is wiped.
+### Prerequisites
 
-### Next Test: Approve Flow (Test 4)
-
-**Objective**: Open chat, review the follow-up email draft, approve it, verify it sends.
-
-**Steps**:
-1. Open `http://localhost:5678/webhook/cw04a-0001-0000-0000-000000000001/chat` (clear browser storage first if returning from previous session)
-2. Send "hey" — confirm 4 drafts surface
-3. Ask to see Draft 2 (follow-up email) — confirm full body displays in chat
-4. Say "send it" — confirm approve_output is called with draft_id=2
-5. Verify in Postgres: `SELECT status FROM outputs_log WHERE id=2;` → should be 'sent'
-6. Verify email arrived at austin.holland@clearwatersecurity.com
-
-**Edit flow test (Test 4b)**:
-1. Ask to see Draft 1 (pricing request)
-2. Ask to edit a line in it
-3. Confirm the edited version in chat, say "send it"
-4. Verify the edited body was sent (check outputs_log.full_content for id=1 after approval)
-
-### Known Outstanding Issues
-- `Is Deal Declining?` node in CW-02 — crashes when referencing `Code: Parse Scores` on calendar-only path. Low priority (non-blocking). Fix next session.
-
----
-
-## System State Going Into Testing
-
-- Qdrant `deals` collection: **0 points** (clean slate)
-- `ingestion_log`: **0 rows** (clean slate)
-- `attribution_queue`: **0 rows** (clean slate)
-- `deals` table: **25 rows** (real pipeline deals, Velentium NOT seeded — must be created by ingestion)
-- CW-01 workflow: **Active** (bugs fixed 2026-02-27)
-
-### Bugs Fixed Before This Test Run
-1. **Qdrant payload empty** — metadata values (`deal_id`, `company_name`, `doc_type`, etc.) now use `.first().json` and include `date_created` and `message_id`
-2. **Log Ingestion query** — converted from broken mixed mustache+expression syntax to proper JS template literal
-3. **Check Duplicate query** — same fix applied
-
----
-
-## Pre-Test Checklist
+Run the stage-setting command to wipe Velentium and start clean:
 
 ```bash
-# All 5 services running
-docker compose ps
+# Wipe all Velentium data
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "
+DELETE FROM deal_workstreams WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM approach_doc WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM deal_stakeholders WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM deal_health WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM calendar_events WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM ingestion_log WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM outputs_log WHERE deal_id = 'cw_velentiummedical_2026';
+DELETE FROM agent_traces WHERE session_id LIKE '%velentiummedical%';
+DELETE FROM n8n_chat_histories WHERE session_id LIKE '%velentiummedical%';
+DELETE FROM deals WHERE deal_id = 'cw_velentiummedical_2026';
+"
 
-# Qdrant clean and healthy
-curl -s http://localhost:6333/collections/deals | jq '{points: .result.points_count, status: .result.status}'
-# Expected: { "points": 0, "status": "green" }
+# Wipe Qdrant vectors
+curl -s -X POST http://localhost:6333/collections/deals/points/delete \
+  -H "Content-Type: application/json" \
+  -d '{"filter":{"must":[{"key":"deal_id","match":{"value":"cw_velentiummedical_2026"}}]}}'
 
-# Postgres clean
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM ingestion_log; SELECT COUNT(*) FROM attribution_queue;"
-# Expected: 0, 0
+# Flush Redis
+docker exec clearwater-redis redis-cli -a YtieuQERpDd6DT0F780EJw FLUSHDB
 
-# Velentium NOT in deals table
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id FROM deals WHERE company_name ILIKE '%velentium%';"
-# Expected: 0 rows
+# Verify clean
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "
+SELECT 'deals' as tbl, count(*) FROM deals WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'deal_health', count(*) FROM deal_health WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'ingestion_log', count(*) FROM ingestion_log WHERE deal_id = 'cw_velentiummedical_2026';
+"
 ```
 
----
+### Test Steps
 
-## Test Suite — Velentium Real Deal Flow
+Each step follows the pattern: **Ingest -> Wait -> Verify Score -> Generate Output -> Review -> Approve -> Next**
 
-The tests below follow the real artifact sequence for a new Velentium deal from first touch.
-Each test builds on the previous one — run them in order.
+#### Step 1: Calendar Invite (Jan 21)
 
----
-
-### Test 1: Discovery Call Calendar Invite (New Deal — First Artifact)
-
-**Objective**: System sees Velentium for the first time via a calendar event from Power Automate.
-Must create a new deal record, insert a `calendar_events` row, and trigger CW-02 with a `calendar_only` zero-score.
-
-**How calendar events actually work**:
-- Austin accepts/sends a calendar invite in Outlook
-- Power Automate detects the calendar event and POSTs JSON to `POST /webhook/calendar-event-ingest` (CW-05)
-- CW-05 parses attendees, derives `deal_id` from the first external attendee domain, upserts the deal, and triggers CW-02
-- **Calendar events do NOT go through Gmail or CW-01**
-
-**To test synthetically** (no real calendar invite needed):
+**Ingest:**
 ```bash
 curl -s -X POST http://localhost:5678/webhook/calendar-event-ingest \
   -H "Content-Type: application/json" \
@@ -114,509 +67,237 @@ curl -s -X POST http://localhost:5678/webhook/calendar-event-ingest \
     "organizer": "Austin Holland <Austin.Holland@clearwatersecurity.com>",
     "attendees": "Austin.Holland@clearwatersecurity.com;Richmond.Donnelly@clearwatersecurity.com;david.kolb@clearwatersecurity.com;uday.rao@velentiummedical.com;travis.bird@velentiummedical.com;afelsenthal@gppfunds.com",
     "location": "Microsoft Teams Meeting",
-    "bodyContent": "Microsoft Teams Meeting. Join the meeting now. Meeting ID: 215 347 332 882 67. Passcode: FP3nZ6sj."
+    "bodyContent": "Microsoft Teams Meeting. Join the meeting now."
   }'
 ```
 
-> **Source**: Real Outlook calendar invite (Velentium | Clearwater, Jan 21 2026, 1–1:30pm ET).
-> Attendees: Austin Holland, Richmond Donnelly, David Kolb (Clearwater); Uday Rao, Travis Bird (Velentium); Adam Felsenthal (GPP Funds).
-> Domain attribution will resolve to `velentiummedical.com` → `deal_id = cw_velentiummedical_2026`.
+**Wait:** 45 seconds
 
-**Steps**:
-1. Run the curl command above
-2. Open n8n > Executions — look for a CW-05 execution, then a CW-02 execution
+**Expected:** Deal created at Discover, 1 deal_health row (calendar_only, all zeros, CAS=1A), no output generation needed for calendar-only.
 
-**Expected Results**:
-- All nodes green
-- AI Classify output:
-  ```json
-  { "company_name": "Velentium", "confidence": "high", "doc_type": "calendar_invite" }
-  ```
-- New deal row created in `deals` table (`deal_id = cw_velentium_2026`)
-- 1 row in `ingestion_log`
-- Qdrant vectors written with correct payload
+#### Step 2: First Call Transcript (Jan 21)
 
-**Validation**:
+**Ingest:**
 ```bash
-# Check new deal record
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, company_name, sender_domains FROM deals WHERE company_name ILIKE '%velentium%';"
-# Expected: 1 row, deal_id = cw_velentium_2026
+python3 -c "
+import json
+from urllib.request import Request, urlopen
+with open('deal-intelligence-engine/backfill/velentium/2026-01-21_transcript-05.txt') as f:
+    content = f.read()
+payload = {
+    'messageId': 'real-velentium-call-20260121',
+    'subject': 'Call Transcript - Velentium First Call 2026-01-21',
+    'from': 'austin.holland@clearwatersecurity.com',
+    'to': 'raustinholland+echo@gmail.com',
+    'sentAt': '2026-01-21T14:30:00-05:00',
+    'bodyContent': content
+}
+data = json.dumps(payload).encode()
+req = Request('http://localhost:5678/webhook/outlook-email-ingest', data=data, headers={'Content-Type': 'application/json'})
+resp = urlopen(req)
+print(f'Status: {resp.status}')
+"
+```
 
-# Check ingestion log
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT message_id, deal_id, doc_type, chunk_count FROM ingestion_log ORDER BY ingested_at DESC LIMIT 1;"
-# Expected: 1 row, doc_type = calendar_invite, chunk_count >= 1
+**Wait:** 120 seconds
 
-# Check Qdrant payload — THIS is the key fix validation
-curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
+**Expected:** 2 deal_health rows, real P2V2C2 scores, CAS advanced
+
+**Output Loop:**
+1. Open Deal Room UI -> select Velentium
+2. Review scores in left panel + Scoring tab
+3. Ask chat: "Draft a follow-up email to Travis Bird" (or appropriate output)
+4. Review draft in Draft Editor
+5. Edit if needed, then approve
+6. Verify in outputs_log
+
+#### Step 3: Follow-up Email (actual email Austin sent)
+
+**Ingest:** POST the real follow-up email Austin actually sent after the Jan 21 call. Use the email content from the backfill folder.
+
+```bash
+python3 -c "
+import json
+from urllib.request import Request, urlopen
+with open('deal-intelligence-engine/backfill/velentium/emails-01.txt') as f:
+    content = f.read()
+payload = {
+    'messageId': 'real-velentium-emails-01',
+    'subject': 'Following up - Velentium & Clearwater Security',
+    'from': 'austin.holland@clearwatersecurity.com',
+    'to': 'travis.bird@velentiummedical.com',
+    'sentAt': '2026-01-28T09:00:00-05:00',
+    'bodyContent': content
+}
+data = json.dumps(payload).encode()
+req = Request('http://localhost:5678/webhook/outlook-email-ingest', data=data, headers={'Content-Type': 'application/json'})
+resp = urlopen(req)
+print(f'Status: {resp.status}')
+"
+```
+
+**Wait:** 120 seconds
+
+**Expected:** Scores should adjust with email evidence, 3 deal_health rows
+
+#### Step 4: Calendar Invite for Feb 5 Scope Review
+
+**Ingest:** Send a calendar invite for the Feb 5 call.
+
+```bash
+curl -s -X POST http://localhost:5678/webhook/calendar-event-ingest \
   -H "Content-Type: application/json" \
-  -d '{"limit": 5, "with_payload": true, "with_vector": false}' \
-  | jq '.result.points[0].payload'
-# Expected: { deal_id: "cw_velentium_2026", company_name: "Velentium", doc_type: "calendar_invite", ... }
-# NOT: null or empty {}
+  -d '{
+    "eventId": "velentium-clearwater-20260205-1000",
+    "subject": "Velentium Scope Review | Clearwater",
+    "start": "2026-02-05T10:00:00-06:00",
+    "end": "2026-02-05T11:00:00-06:00",
+    "organizer": "uday.rao@velentiummedical.com",
+    "attendees": "Austin.Holland@clearwatersecurity.com;Richmond.Donnelly@clearwatersecurity.com;steve.akers@clearwatersecurity.com;travis.bird@velentiummedical.com;uday.rao@velentiummedical.com;isabel.martinez@velentiummedical.com",
+    "location": "Microsoft Teams Meeting",
+    "bodyContent": "Scope review call for Clearwater security services engagement."
+  }'
 ```
 
-**Pass Criteria**:
-- Qdrant payload fields populated (not null/empty) — this is the primary fix being validated
-- New deal row created in `deals` table
-- `ingestion_log` has 1 row with correct `deal_id`
+**Wait:** 45 seconds
 
----
+**Expected:** 2 calendar_events rows, deal_health may or may not add a new row (depends on whether CW-02 triggers)
 
-### Test 1a: CW-02 Shell Opportunity — Calendar-Only Zero-Score
+#### Step 5: Scope Review Call Transcript (Feb 5)
 
-**Objective**: Confirm CW-02 detects the calendar-only deal and inserts a zero-score placeholder rather than running the full Opus scoring pipeline. This is **correct expected behavior** for any new deal whose first (and only) artifact is a calendar invite.
-
-**Prerequisite**: Test 1 passed. `cw_velentium_2026` exists with 1 `calendar_invite` in `ingestion_log`.
-
-**How it works**:
-- CW-01 fires CW-02 via `HTTP: Trigger Deal Health` after ingestion
-- CW-02 runs `Postgres: Check Doc Types` → `total = 1`, `calendar_count = 1`
-- `IF: Calendar Only?` = true → routes to `Code: Insert Placeholder Health` (skips RAG/Opus entirely)
-- Zero-score row inserted with `trigger_type = 'calendar_only'`, `critical_activity_stage = '1A'`
-
-**Validation**:
+**Ingest:**
 ```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, pain_score, power_score, vision_score, value_score, change_score, control_score,
-   trigger_type, critical_activity_stage, general_narrative, scored_at
-   FROM deal_health WHERE deal_id = 'cw_velentium_2026' ORDER BY scored_at DESC LIMIT 1;"
-# Expected: all scores = 0, trigger_type = 'calendar_only', CAS = '1A'
-# general_narrative = 'New deal created from calendar invite. No scoring data available yet.'
+python3 -c "
+import json
+from urllib.request import Request, urlopen
+with open('deal-intelligence-engine/backfill/velentium/2026-02-05_transcript-04.txt') as f:
+    content = f.read()
+payload = {
+    'messageId': 'real-velentium-call-20260205',
+    'subject': 'Call Transcript - Velentium Scope Review 2026-02-05',
+    'from': 'austin.holland@clearwatersecurity.com',
+    'to': 'raustinholland+echo@gmail.com',
+    'sentAt': '2026-02-05T11:00:00-06:00',
+    'bodyContent': content
+}
+data = json.dumps(payload).encode()
+req = Request('http://localhost:5678/webhook/outlook-email-ingest', data=data, headers={'Content-Type': 'application/json'})
+resp = urlopen(req)
+print(f'Status: {resp.status}')
+"
 ```
 
-**Pass Criteria**:
-- `deal_health` row exists for the deal
-- All P2V2C2 scores = 0
-- `trigger_type = 'calendar_only'`
-- Full Opus pipeline was NOT triggered (no RAG query executions in n8n execution log)
+**Wait:** 120 seconds
 
----
+**Expected:** Scores should increase significantly (detailed proposal-level evidence), CAS should advance, deal_stage should update
 
-### Test 2: Deduplication — Same Invite Forwarded Again
+**Output Loop:**
+1. Review updated scores in UI
+2. Ask chat to draft appropriate outputs (pricing request, pre-call planner, internal team update, etc.)
+3. Review and approve each draft
+4. Verify all in outputs_log
 
-**Objective**: Forwarding the same calendar invite a second time produces no new records.
+#### Step 6: Additional Real Artifacts (as available)
 
-**Steps**:
-1. Forward the exact same email from Test 1 again
-2. Wait 2 minutes
-3. Check n8n execution
+Continue ingesting any additional real artifacts:
+- Internal pricing request email
+- Travis/Uday reply emails
+- Any additional calendar invites or call transcripts
 
-**Expected Results**:
-- New execution fires
-- `Postgres: Check Duplicate` finds existing `message_id`
-- `Is New Email?` routes to the false branch — all downstream nodes skipped
-- No new rows in `ingestion_log`
-- No new vectors in Qdrant
+After each: verify score, generate outputs, review, approve.
 
-**Validation**:
-```bash
-# Still only 1 ingestion_log row
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM ingestion_log WHERE deal_id = 'cw_velentium_2026';"
-# Expected: 1
-
-# Still same vector count as after Test 1
-curl -s http://localhost:6333/collections/deals | jq '.result.points_count'
-```
-
-**Pass Criteria**: Zero duplicate records after second forward.
-
----
-
-### Test 3: Discovery Call Transcript (Existing Deal, Multi-Chunk)
-
-**Objective**: Call transcript for Velentium associates with the existing deal (no new deal row),
-splits into multiple chunks, all stored with correct payload.
-
-**Prerequisite**: Test 1 passed. `cw_velentium_2026` exists in `deals`.
-
-**Send to**: `raustinholland+echo@gmail.com`
-
-**Sample email body** (or attach as `velentium-discovery-call.txt`):
-```
-Subject: Call Transcript — Velentium Discovery Call 2026-03-05
-
-CALL TRANSCRIPT
-Date: March 5, 2026
-Duration: 45 minutes
-Participants:
-  - Austin Holland, Account Executive, Clearwater Security & Compliance
-  - Brad Brown, CTO, Velentium
-  - Jennifer Lee, VP Operations, Velentium
-
----
-
-Austin: Brad, Jennifer — thanks for making time today. Can you give me a picture
-of where Velentium stands from a cybersecurity and compliance standpoint?
-
-Brad: Sure. So we're a medical device engineering firm — we build life-critical
-embedded systems for clients in the MedTech space. Most of our clients are subject
-to FDA 21 CFR Part 11, some have IEC 62443 requirements, and we're increasingly
-seeing HIPAA come into play when our devices touch patient data. Our challenge is
-that our compliance posture hasn't kept pace with how fast we've grown. We tripled
-headcount in the last two years and our security program is still sized for where
-we were three years ago.
-
-Austin: That's a significant gap. Has anything specific forced the issue recently?
-
-Brad: Yes — we just went through a SOC 2 Type II audit and it surfaced gaps in our
-access control and incident response processes. We passed, but barely. Our lead
-auditor told us we need to remediate before the next cycle or we're at risk of a
-qualified opinion. That would be a serious problem for our enterprise clients.
-
-Austin: How did leadership react to that?
-
-Jennifer: Our CEO flagged it immediately. We have a board presentation in Q2 and
-he wants to show the board that we've got a credible remediation plan in place.
-We also have three enterprise contracts up for renewal in the fall where security
-posture is an explicit evaluation criterion. So the business consequences of not
-fixing this are very real.
-
-Austin: And Jennifer, from your side — what are the biggest operational pain points?
-
-Jennifer: Vendor risk. We work with about 40 subcontractors who have varying levels
-of access to our development environment and client data. We have basically no
-formal third-party risk management process. It's all informal. And our incident
-response plan hasn't been tested in two years.
-
-Austin: Those are all solvable. Let me ask about the decision-making process. When
-you're ready to move forward on an engagement like this, who's in the room?
-
-Brad: Our CEO Marcus Chen makes the final call on anything above $50K. But he won't
-move without Jennifer's and my recommendation. If we're aligned, Marcus typically
-follows. He trusts our judgment on the technical and operational side.
-
-Jennifer: And I'll be honest — Marcus is very ROI-oriented. He's going to want to
-see the risk quantified in business terms, not just technical language.
-
-Austin: We can build that case. The cost of a breach for a company in your position —
-regulatory exposure, client notification, potential loss of enterprise contracts —
-easily exceeds $1M. Framing a $150-200K engagement against that risk profile is
-a compelling story. Let me propose next steps: I'd like to put together an Approach
-Document that outlines a Clearwater SRA and third-party risk program build-out
-specifically for Velentium. I can target that for March 12th. Does that work?
-
-Brad: That works. Can you include something on the SOC 2 remediation roadmap?
-That's our most time-sensitive item.
-
-Austin: Absolutely. I'll scope it as a combined SRA, TPRM, and SOC 2 remediation
-program. One more question — are you talking to any other vendors right now?
-
-Brad: We had one conversation with a firm that was too enterprise-focused for our
-stage. You're the active conversation.
-
-Austin: Good to know. I'll get the Approach Document to you by March 12th.
-
----
-END TRANSCRIPT
-```
-
-**Expected Results**:
-- AI Classify: `doc_type = "call_transcript"`, company = "Velentium", confidence = high
-- Deal lookup finds `cw_velentium_2026` — NO new row in `deals`
-- Text splits into 4-7 chunks
-- All chunks in Qdrant under `deal_id = cw_velentium_2026`
-- `ingestion_log` now has 2 rows for Velentium
-
-**Validation**:
-```bash
-# Still only 1 deal record (no duplicate)
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM deals WHERE company_name ILIKE '%velentium%';"
-# Expected: 1
-
-# Now 2 ingestion_log entries
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT doc_type, chunk_count, ingested_at FROM ingestion_log \
-   WHERE deal_id = 'cw_velentium_2026' ORDER BY ingested_at;"
-# Expected: 2 rows — calendar_invite, call_transcript
-
-# Qdrant vector count increased (transcript = multiple chunks)
-curl -s http://localhost:6333/collections/deals | jq '.result.points_count'
-# Expected: more than after Test 1
-
-# Verify all vectors have deal_id payload
-curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
-  -H "Content-Type: application/json" \
-  -d '{"limit": 20, "with_payload": true, "with_vector": false}' \
-  | jq '[.result.points[] | {id: .id, deal_id: .payload.deal_id, doc_type: .payload.doc_type}]'
-# Expected: all entries show deal_id = "cw_velentium_2026", none null
-```
-
-**Pass Criteria**:
-- Only 1 deal row in `deals`
-- Multiple chunks in Qdrant, all with correct payload
-- `ingestion_log` has 2 rows
-
----
-
-### Test 4: Low-Confidence Attribution — Unknown Sender
-
-**Objective**: An ambiguous email from an unknown sender goes to `attribution_queue`, not Qdrant.
-
-**Send to**: `raustinholland+echo@gmail.com`
-
-**Sample**:
-```
-From: info@unknownclinic.org
-Subject: Question about compliance services
-Body: Hi, we're interested in learning more about your cybersecurity assessment services.
-```
-
-**Expected Results**:
-- AI Classify: `confidence = "low"`
-- Routes to `Postgres: Queue for Confirmation`
-- Row in `attribution_queue` with `resolution = 'pending'`
-- NOT in `ingestion_log`, NOT in Qdrant
-
-**Validation**:
-```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT subject, ai_guess_company, ai_confidence, resolution FROM attribution_queue \
-   WHERE resolution = 'pending' ORDER BY queued_at DESC LIMIT 3;"
-```
-
----
-
-### Test 5: Phase 2 Trigger — Deal Health Scoring (After Phase 2 Built)
-
-**Objective**: After ingesting the discovery call transcript (Test 3), the HTTP trigger fires
-and Workflow 2 scores Velentium's P2V2C2 dimensions from the RAG context.
-
-**Prerequisite**: Workflow 2 (CW-02) built and active.
-
-**Expected Results**:
-- Webhook `POST /webhook/deal-health-trigger` returns 200
-- Workflow 2 runs 15 RAG queries against Velentium namespace
-- Claude Opus scores all 6 P2V2C2 dimensions (expect low scores — early Discover stage)
-- New row inserted to `deal_health` table
-
-**Expected Approximate Scores** (based on transcript content):
-| Dimension | Expected | Reasoning |
-|---|---|---|
-| Pain | 2-3 | Pain articulated (SOC 2, TPRM), not yet validated by ES |
-| Power | 1-2 | Know CEO is DM, but no direct access yet |
-| Vision | 1-2 | Current/future state starting to emerge |
-| Value | 1 | ROI discussed but not agreed |
-| Change | 1-2 | Urgency exists (board, renewals) but no commitment |
-| Control | 1 | No DAP yet |
-
-**Validation**:
-```bash
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, pain_score, power_score, vision_score, value_score, change_score, \
-   control_score, (pain_score+power_score+vision_score+value_score+change_score+control_score) AS total, \
-   scored_at FROM deal_health WHERE deal_id = 'cw_velentium_2026' ORDER BY scored_at DESC LIMIT 1;"
-```
-
----
-
-## Validation Command Cheat Sheet
+### Verification Cheat Sheet
 
 ```bash
-# Quick health check
-curl -s http://localhost:6333/collections/deals | jq '{points: .result.points_count, status: .result.status}'
+# Quick state check
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "
+SELECT 'deals' as tbl, count(*) FROM deals WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'deal_health', count(*) FROM deal_health WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'ingestion_log', count(*) FROM ingestion_log WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'outputs_log', count(*) FROM outputs_log WHERE deal_id = 'cw_velentiummedical_2026'
+UNION ALL SELECT 'calendar_events', count(*) FROM calendar_events WHERE deal_id = 'cw_velentiummedical_2026';
+"
+
+# Score progression
+docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "
+SELECT scored_at, trigger_type, pain_score, power_score, vision_score, value_score, change_score, control_score, critical_activity_stage
+FROM deal_health WHERE deal_id = 'cw_velentiummedical_2026' ORDER BY scored_at;
+"
+
+# Qdrant vector count
+curl -s -X POST http://localhost:6333/collections/deals/points/count \
+  -H 'Content-Type: application/json' \
+  -d '{"filter":{"must":[{"key":"deal_id","match":{"value":"cw_velentiummedical_2026"}}]}}' \
+  | python3 -c "import sys,json; print(f'Qdrant vectors: {json.load(sys.stdin)[\"result\"][\"count\"]}')"
 
 # All ingestion log entries
 docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT id, deal_id, doc_type, chunk_count, sender_email, ingested_at FROM ingestion_log ORDER BY ingested_at DESC;"
+  "SELECT id, deal_id, doc_type, chunk_count, sender_email, ingested_at FROM ingestion_log WHERE deal_id = 'cw_velentiummedical_2026' ORDER BY ingested_at;"
 
-# All Qdrant payloads (verify no nulls)
+# Qdrant payloads (verify no nulls)
 curl -s -X POST http://localhost:6333/collections/deals/points/scroll \
   -H "Content-Type: application/json" \
-  -d '{"limit": 50, "with_payload": true, "with_vector": false}' \
-  | jq '[.result.points[] | {id: .id, deal_id: .payload.deal_id, doc_type: .payload.doc_type, company: .payload.company_name}]'
-
-# All deals table
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, company_name, deal_stage FROM deals ORDER BY created_at DESC LIMIT 5;"
-
-# Attribution queue
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT subject, ai_guess_company, resolution FROM attribution_queue ORDER BY queued_at DESC LIMIT 5;"
+  -d '{"filter":{"must":[{"key":"deal_id","match":{"value":"cw_velentiummedical_2026"}}]},"limit": 20, "with_payload": true, "with_vector": false}' \
+  | python3 -c "import sys,json; [print(f'{p[\"payload\"][\"doc_type\"]:20s} chunk {p[\"payload\"].get(\"chunk_index\",\"?\")}') for p in json.load(sys.stdin)['result']['points']]"
 ```
+
+### Validation Checklist
+
+- [ ] Calendar invite creates deal (CW-12 upsert working)
+- [ ] Calendar-only zero-score placeholder inserted (CW-02 calendar branch)
+- [ ] No feedback loop (exactly 1 deal_health row per ingestion event)
+- [ ] Real transcript scores with meaningful P2V2C2 values
+- [ ] deal_stage updates after scoring (CW-02 stage drift fix)
+- [ ] Scoring tab shows clean timeline with score deltas
+- [ ] Chat agent resolves deal_id on first iteration (no guessing)
+- [ ] Output generation works (draft appears in Draft Editor)
+- [ ] Draft approval works (status changes to 'sent')
+- [ ] Markdown stripping working (no ###, ---, emojis in chat)
+- [ ] Token usage reasonable (2-3 iterations, <20K tokens per query)
 
 ---
 
 ## Test Execution Record
 
-| Test # | Test Name | Date | Status | Notes |
-|--------|-----------|------|--------|-------|
-| 1 | Calendar Invite — Velentium (New Deal) | 2026-03-02 | ⬜ | Needs clean retest next session |
-| 1a | CW-02 Shell Opportunity — Calendar-Only Zero-Score | 2026-03-02 | ⬜ | Needs clean retest next session |
-| 2 | Deduplication — Same Invite Again | 2026-03-02 | ⬜ | Bug found + fixed (CW-05 xmax gate). Needs clean retest next session |
-| 3 | Discovery Call Transcript — Existing Deal | | ⬜ | |
-| 4 | Low-Confidence Attribution Queue | | ⬜ | Low priority |
-| 5 | Phase 2 Health Scoring | | ⬜ | |
-| 6 | Phase 3 Output Generation | | ⬜ | |
-| 7 | Phase 4 Chat Agent smoke test | | ⬜ | |
-| 8 | Phase 5 AD Tracker — end-to-end | | ⬜ | |
+| Step | Test Name | Date | Status | Notes |
+|------|-----------|------|--------|-------|
+| 1 | Calendar Invite (Jan 21) | 2026-03-05 | PASS | Deal created, zero-score placeholder, no loop |
+| 2 | First Call Transcript (Jan 21) | 2026-03-05 | PASS | Scored 16/30, CAS=3A |
+| 3 | Follow-up Email | | | |
+| 4 | Calendar Invite (Feb 5) | | | |
+| 5 | Scope Review Transcript (Feb 5) | | | |
+| 6 | Additional Artifacts | | | |
 
 ---
 
-## Fix Log (2026-03-02)
+## Fix Log
 
-### CW-05: Calendar Event Dedup — CW-02 Re-triggered on Duplicate
-**Bug**: `Postgres: Insert Calendar Event` used `ON CONFLICT DO UPDATE`, which always returned a row and always triggered CW-02, even for duplicate events.
-**Fix**: Added `RETURNING (xmax = 0) AS is_new_insert` to the SQL. Added new node `IF: New Event?` between `Postgres: Insert Calendar Event` and `HTTP: Trigger Health Agent`. Gates CW-02 trigger on `is_new_insert = true` only. Duplicate/rescheduled events still update the row (time, attendees) but do not re-trigger scoring.
-**Verified**: `(xmax = 0)` evaluates `true` inside the transaction on fresh insert, `false` on update. Confirmed in Postgres directly before deploying.
-**Deployed**: `workflow-05-calendar-sync.json`, 7 nodes, 2026-03-02.
+### 2026-03-05: CW-12 Calendar Sync — Deal-Exists Gate Removed
+**Bug**: Gate blocked calendar invites from creating new deals when Velentium was wiped for testing.
+**Fix**: Removed 4 gate nodes. Replaced with `Postgres: Upsert Deal` (INSERT ON CONFLICT DO UPDATE). Calendar invites now always create or update the deal.
 
----
+### 2026-03-05: CW-12 Calendar Sync — Feedback Loop Disconnected
+**Bug**: CW-12 re-triggered CW-02 after every calendar event, causing score thrashing (11 scoring events for Velentium).
+**Fix**: `HTTP: Trigger Health Agent` node disconnected (orphaned, not deleted). Calendar events no longer trigger rescoring.
 
-## Next Session — Start Here
+### 2026-03-05: CW-02 Deal Stage Drift Fix
+**Bug**: CW-02 never updated `deals.deal_stage` after scoring. Deals stayed at "discover" regardless of CAS.
+**Fix**: Added `Postgres: Update Deal Stage` node with CAS-to-stage mapping (1x->Discover, 2x->Qualify, 3x->Prove, 4x->Negotiate, 5x->Close).
 
-**Pre-test: Clean system completely, then run Tests 1 → 2 in order.**
+### 2026-03-05: CW-03 Markdown Stripping
+**Bug**: Claude responses contained markdown headers, horizontal rules, emojis, tables despite prompt rules.
+**Fix**: Added post-processing in `Code: Chat Response` that strips headers->bold, removes hr/emojis, converts tables to plain text.
 
-```bash
-# 1. Wipe all deal data
-cd deal-intelligence-engine
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "
-TRUNCATE TABLE deal_workstreams CASCADE;
-TRUNCATE TABLE approach_doc CASCADE;
-TRUNCATE TABLE deal_stakeholders CASCADE;
-TRUNCATE TABLE deal_health CASCADE;
-TRUNCATE TABLE calendar_events CASCADE;
-TRUNCATE TABLE ingestion_log CASCADE;
-TRUNCATE TABLE outputs_log CASCADE;
-TRUNCATE TABLE attribution_queue CASCADE;
-TRUNCATE TABLE n8n_chat_histories CASCADE;
-TRUNCATE TABLE deals CASCADE;"
+### 2026-03-05: CW-03 Deal ID Injection
+**Bug**: Agent guessed wrong deal_id on first iteration, wasting 1-2 iterations and tokens.
+**Fix**: Added `Code: Inject Deal ID` node between Chat Trigger and AI Agent. Prepends `[DEAL_SCOPE: xxx]` to chat input. System prompt references injected deal_id.
 
-# 2. Wipe Qdrant
-curl -s -X DELETE http://localhost:6333/collections/deals
-curl -s -X PUT http://localhost:6333/collections/deals \
-  -H "Content-Type: application/json" \
-  -d '{"vectors":{"size":1536,"distance":"Cosine"},"quantization_config":{"scalar":{"type":"int8","always_ram":true}}}'
+### 2026-03-05: CW-3c Scoring History Query
+**Added**: `scoring_history` case in Postgres Query Webhook. Returns all deal_health rows with scores, justifications, CAS, narratives for the Scoring tab.
 
-# 3. Verify zeros
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c "SELECT 'deals' as tbl, count(*) FROM deals UNION ALL SELECT 'deal_health', count(*) FROM deal_health UNION ALL SELECT 'calendar_events', count(*) FROM calendar_events;"
-curl -s http://localhost:6333/collections/deals | jq '{points: .result.points_count}'
-```
+### 2026-03-05: UI Scoring Tab
+**Added**: New Scoring tab in right panel. Timeline layout with connected dots, color-coded trigger badges, score deltas, CAS pills, expandable justifications.
 
-**Then run Tests 1, 1a, 2 using the synthetic curl command above.**
-Expected after all 3 pass: deals=1, calendar_events=1, deal_health=1.
-
----
-
-## Phase 5 Test Results (2026-03-01)
-
-### Agent 2 Phase 5 Fields — Velentium Verified
-After CW-02 re-scored Velentium with Phase 5 additions:
-- `key_objectives_strategic`: "Bifurcate security/compliance oversight from IT operations to eliminate conflict of interest" ✅
-- `key_objectives_security`: Populated (SRA, TPRM, incident response) ✅
-- `key_objectives_compliance`: Populated (HIPAA, SOC 2) ✅
-- `inferred_workstreams`: `["mss", "siem_log_management", "mdr", "iso27001_assessment", "managed_azure_cloud", "vciso"]` ✅
-- `delivery_staff_on_call`: `[{"name": "Steve Akers", "role": "delivery", "email": "steve.akers@clearwatersecurity.com"}]` ✅
-
-### Agent 5 AD Tracker — Velentium Verified
-- `approach_doc` table: 1 row created for `cw_velentium_2026` ✅
-- `deal_workstreams` table: 6 rows inserted (one per inferred workstream) ✅
-- Gap assessment: **correctly skipped** — Velentium is in Discover stage (gaps only fire for Qualify+) ✅
-- AD Tracker fires async from CW-02 tail; CW-02 continues without waiting ✅
-
-### Phase 5 Validation Commands
-```bash
-# Check approach_doc table
-docker exec deal-intelligence-engine-postgres-1 psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, pricing_requested, dc_principal_name, last_updated_at FROM approach_doc;"
-
-# Check deal_workstreams
-docker exec deal-intelligence-engine-postgres-1 psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, service_slug, confidence, scoping_status FROM deal_workstreams WHERE deal_id = 'cw_velentium_2026';"
-
-# Check deal_health Phase 5 fields
-docker exec deal-intelligence-engine-postgres-1 psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, key_objectives_strategic, inferred_workstreams, delivery_staff_on_call \
-   FROM deal_health WHERE deal_id = 'cw_velentium_2026' ORDER BY scored_at DESC LIMIT 1;"
-
-# Check clearwater_services seeded
-docker exec deal-intelligence-engine-postgres-1 psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM clearwater_services;"
-# Expected: 37
-
-# Check clearwater_staff seeded
-docker exec deal-intelligence-engine-postgres-1 psql -U clearwater -d clearwater_deals -c \
-  "SELECT COUNT(*) FROM clearwater_staff;"
-# Expected: 209
-
-# Check clearwater_internal Qdrant collection
-curl -s http://localhost:6333/collections/clearwater_internal | jq '{points: .result.points_count, status: .result.status}'
-# Expected: { "points": 0, "status": "green" } — collection exists, docs not yet ingested
-```
-
----
-
-## Known Issues / Deferred Items (as of 2026-03-01)
-
-1. **Test 4 (attribution queue)** — Not yet run. Low priority.
-2. **`HTTP: Draft Declining Alert` in CW-02** — FIXED this session. Malformed JSON body (mixed mustache+expression syntax) replaced with `={{ JSON.stringify({...}) }}` pattern.
-3. **`pricing_request` output type (CW-03)** — Not yet implemented. Agent 5 queues this gap type but CW-03 doesn't know how to generate it. Deferred pending Austin confirming Carter/Steve Teams message format.
-4. **`clearwater_internal` Qdrant collection** — FIXED this session. 57 vectors ingested: security_engineering (5), managed_security_healthcare (6), bia_bcp (2), privacy_compliance_audit (42), managed_azure_cloud (2 inline). Script: `scripts/ingest-clearwater-internal.py`.
-5. **`set_deal_hold` chat tool** — Not built. Austin sets `hold_until` via Metabase SQL runner for now.
-
-## This Session — What Was Built (2026-03-01)
-
-1. **Metabase dashboards** — 3 dashboards built via API:
-   - Dashboard 1 (Command Center): http://localhost:3000/dashboard/2 — KPIs + bubble chart + pipeline bar + deal health matrix (conditional formatting)
-   - Dashboard 2 (Deal Deep Dive): http://localhost:3000/dashboard/3 — P2V2C2 bars + trend line + stakeholders + activity feed, filtered by company name
-   - Dashboard 3 (Scoring Audit Log): http://localhost:3000/dashboard/4 — full scoring history per deal
-   - Command Center set as Metabase homepage
-
-2. **Calendar invite ingestion (CW-01)** — 4 new nodes added, 31 total:
-   - `Code: Parse ICS` — parses .ics attachment or inline VCALENDAR, extracts all fields
-   - `Code: Build Calendar SQL` — builds safe SQL using sq() helper
-   - `Postgres: Insert Calendar Event` — inserts into calendar_events table
-   - `Code: Merge ICS Text` — packages event text for embed pipeline
-   - `Route by Document Type` now has calendar as first output (5 total)
-   - AI classifier updated to detect calendar_invite doc_type
-   - Deployed and active
-
-## Next Session — End-to-End Test Plan
-
-**Goal**: Run a complete deal lifecycle from first calendar invite through health scoring.
-
-**Pre-test: Clean Velentium from system** (since Velentium already exists from prior testing):
-```bash
-# Remove existing Velentium data to simulate fresh deal
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "DELETE FROM deal_health WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM deal_stakeholders WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM ingestion_log WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM calendar_events WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM approach_doc WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM deal_workstreams WHERE deal_id = 'cw_velentium_2026';
-   DELETE FROM deals WHERE deal_id = 'cw_velentium_2026';"
-
-# Clear Qdrant vectors for this deal
-curl -s -X POST http://localhost:6333/collections/deals/points/delete \
-  -H "Content-Type: application/json" \
-  -d '{"filter": {"must": [{"key": "deal_id", "match": {"value": "cw_velentium_2026"}}]}}'
-```
-
-**Test sequence** (run Tests 1-3 in TESTING.md in order, then verify health score + dashboards):
-
-1. **Test 1**: Forward calendar invite → verify `calendar_events` row, deal created, vectors in Qdrant
-2. **Test 2**: Dedup check
-3. **Test 3**: Forward call transcript → verify multi-chunk ingestion
-4. **Verify CW-02 fired**: Check `deal_health` table for new scoring row
-5. **Verify CW-05 fired**: Check `approach_doc` and `deal_workstreams` tables
-6. **Open Metabase**: Verify Velentium appears in Command Center matrix, Deep Dive shows scores
-7. **Open chat widget**: Ask "What is the Velentium P2V2C2 score?" — verify correct answer
-8. **Test output generation**: Ask chat agent to draft a follow-up email to Brad Brown, preview it, approve it
-
-**New Test: Calendar Invite Creates Deal**
-Verify the new ICS branch by checking:
-```bash
-# calendar_events table has the event
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, title, start_time, meeting_type, attendees FROM calendar_events \
-   WHERE deal_id = 'cw_velentium_2026';"
-
-# Deal was created at Discover stage
-docker exec clearwater-postgres psql -U clearwater -d clearwater_deals -c \
-  "SELECT deal_id, company_name, deal_stage, created_at FROM deals \
-   WHERE deal_id = 'cw_velentium_2026';"
-```
+### 2026-03-02: CW-05 Calendar Event Dedup
+**Bug**: `Postgres: Insert Calendar Event` used `ON CONFLICT DO UPDATE`, always returned a row, always triggered CW-02 even for duplicates.
+**Fix**: Added `RETURNING (xmax = 0) AS is_new_insert` + `IF: New Event?` gate. Duplicate events update the row but don't re-trigger scoring.

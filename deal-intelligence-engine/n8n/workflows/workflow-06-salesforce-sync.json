@@ -1,0 +1,199 @@
+{
+  "name": "CW-06: Echo Sync (Salesforce)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "c6a1b2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d",
+      "name": "Webhook: Salesforce Sync Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "salesforce-sync",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "c6a1b2d3-e4f5-4a6b-8c9d-0e1f2a3b4c5d"
+    },
+    {
+      "id": "d7b2c3e4-f5a6-4b7c-9d0e-1f2a3b4c5d6e",
+      "name": "Postgres: Get Salesforce Opp ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT salesforce_opp_id, company_name, deal_stage, close_date, deal_value_usd FROM deals WHERE deal_id = '{{ $json.body.deal_id }}'",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "jv5EvLFgRBCbWKmr",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "e8c3d4f5-a6b7-4c8d-0e1f-2a3b4c5d6e7f",
+      "name": "Code: Build Salesforce Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "parameters": {
+        "jsCode": "const deal = $input.first().json;\nconst webhook = $('Webhook: Salesforce Sync Trigger').first().json.body;\n\n// Determine operation: create vs update\nconst operation = deal.salesforce_opp_id ? 'update' : 'create';\n\n// Build DAP timeline summary\nlet dapSummary = '';\nif (webhook.dap_timeline) {\n  try {\n    const milestones = typeof webhook.dap_timeline === 'string' ? JSON.parse(webhook.dap_timeline) : webhook.dap_timeline;\n    if (Array.isArray(milestones)) {\n      dapSummary = milestones.map(m => {\n        const status = m.complete ? '\\u2713' : '\\u25CB';\n        return status + ' ' + (m.name || m.milestone || 'Milestone') + (m.date ? ' (' + m.date + ')' : '');\n      }).join('\\n');\n    }\n  } catch(e) { dapSummary = String(webhook.dap_timeline || ''); }\n}\n\n// Build Deal Highlights (DAP + current/future state + key stakeholder success criteria)\nconst highlights = [];\nif (dapSummary) highlights.push('DAP TIMELINE:\\n' + dapSummary);\nif (webhook.current_state_org || webhook.current_state_activities || webhook.current_state_technology) {\n  highlights.push('CURRENT STATE:\\nOrg: ' + (webhook.current_state_org || 'N/A') + '\\nActivities: ' + (webhook.current_state_activities || 'N/A') + '\\nTechnology: ' + (webhook.current_state_technology || 'N/A'));\n}\nif (webhook.future_state_org || webhook.future_state_activities || webhook.future_state_technology) {\n  highlights.push('FUTURE STATE:\\nOrg: ' + (webhook.future_state_org || 'N/A') + '\\nActivities: ' + (webhook.future_state_activities || 'N/A') + '\\nTechnology: ' + (webhook.future_state_technology || 'N/A'));\n}\nif (webhook.key_stakeholder_success_criteria) {\n  highlights.push('KEY STAKEHOLDER SUCCESS CRITERIA:\\n' + webhook.key_stakeholder_success_criteria);\n}\n\n// Build risks string\nlet risksStr = '';\nif (webhook.risks) {\n  const risks = Array.isArray(webhook.risks) ? webhook.risks : [webhook.risks];\n  risksStr = risks.join('\\n- ');\n  if (risksStr) risksStr = '- ' + risksStr;\n}\n\n// Map stage to Salesforce stage\nconst stageMap = {\n  'discover': 'Discover',\n  'qualify': 'Qualify',\n  'prove': 'Prove',\n  'negotiate': 'Negotiate',\n  'close': 'Close'\n};\n\nconst payload = {\n  // Operation\n  operation: operation,\n  salesforce_opp_id: deal.salesforce_opp_id || null,\n\n  // Required Opportunity fields\n  company_name: deal.company_name || webhook.company_name,\n  deal_id: webhook.deal_id,\n  close_date: deal.close_date || webhook.close_date || null,\n  stage: stageMap[webhook.deal_stage] || webhook.deal_stage || deal.deal_stage || 'Discover',\n  deal_value: deal.deal_value_usd || null,\n\n  // P2V2C2 scores\n  pain_score: webhook.pain_score || 0,\n  pain_description: webhook.pain_justification || '',\n  power_score: webhook.power_score || 0,\n  persons_with_power: webhook.champion_name || '',\n  vision_score: webhook.vision_score || 0,\n  vision_description: webhook.vision_justification || '',\n  value_score: webhook.value_score || 0,\n  value_notes: webhook.value_justification || '',\n  change_score: webhook.change_score || 0,\n  change_notes: webhook.change_justification || '',\n  control_score: webhook.control_score || 0,\n  control_notes: webhook.control_justification || '',\n\n  // Other fields\n  critical_activity_stage: webhook.critical_activity_stage || '',\n  next_step: webhook.next_step || '',\n  deal_highlights: highlights.join('\\n\\n---\\n\\n'),\n  risks: risksStr,\n\n  // Stakeholders\n  champion_name: webhook.champion_name || '',\n  champion_title: webhook.champion_title || '',\n  executive_sponsor_name: webhook.executive_sponsor_name || '',\n  executive_sponsor_title: webhook.executive_sponsor_title || '',\n\n  // Metadata\n  p2v2c2_total: webhook.p2v2c2_total || 0,\n  trend_direction: webhook.trend_direction || 'stable',\n  scored_at: new Date().toISOString()\n};\n\nreturn { json: payload };\n"
+      }
+    },
+    {
+      "id": "f9d4e5a6-b7c8-4d9e-1f2a-3b4c5d6e7f80",
+      "name": "IF: Skip Calendar-Only",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "p2v2c2-gt-zero",
+              "leftValue": "={{ $json.p2v2c2_total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a0e5f6b7-c8d9-4e0f-2a3b-4c5d6e7f8091",
+      "name": "HTTP: Post to Make.com",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://hook.us2.make.com/gb49jf7r9jf1uvs4cb58xmv3hz48vnbk",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "b1f6a7c8-d9e0-4f1a-3b4c-5d6e7f809102",
+      "name": "Code: Build Sync Log SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300],
+      "parameters": {
+        "jsCode": "const data = $('HTTP: Post to Make.com').first().json;\nconst payload = $('Code: Build Salesforce Payload').first().json;\n\nfunction sq(v) { return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\"; }\n\nconst meta = JSON.stringify({\n  operation: payload.operation,\n  p2v2c2_total: payload.p2v2c2_total,\n  company: payload.company_name\n}).replace(/'/g, \"''\");\n\nconst sql = `INSERT INTO workflow_errors (workflow_id, workflow_name, node_name, error_message, deal_id, severity, metadata)\nVALUES ('salesforce_sync', 'CW-06 Echo Sync', 'HTTP: Post to Make.com',\n'Sync completed successfully',\n${sq(payload.deal_id)}, 'info',\n'${meta}')`;\n\nreturn { json: { insert_sql: sql } };\n"
+      }
+    },
+    {
+      "id": "c2a7b8d9-e0f1-4a2b-4c5d-6e7f80910213",
+      "name": "Postgres: Log Sync",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1680, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_sql }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "jv5EvLFgRBCbWKmr",
+          "name": "Clearwater Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Salesforce Sync Trigger": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Salesforce Opp ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Salesforce Opp ID": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Salesforce Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Salesforce Payload": {
+      "main": [
+        [
+          {
+            "node": "IF: Skip Calendar-Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Skip Calendar-Only": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Post to Make.com",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "HTTP: Post to Make.com": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Sync Log SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Sync Log SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Log Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "saveDataSuccessExecution": "all"
+  }
+}

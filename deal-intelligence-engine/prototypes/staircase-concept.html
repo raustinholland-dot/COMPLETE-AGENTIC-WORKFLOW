@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Staircase Band Concept — P2V2C2 Radial Bands</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0f172a; color:#e2e8f0; font-family:Inter,system-ui,sans-serif; overflow:hidden; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    width: 100vw; height: 100vh;
+  }
+  .cell {
+    position: relative;
+    border: 1px solid rgba(148,163,184,0.08);
+    overflow: hidden;
+  }
+  .cell canvas { display:block; width:100%; height:100%; }
+  .label {
+    position:absolute; top:10px; left:14px;
+    font-size:13px; font-weight:700; color:rgba(248,250,252,0.7);
+    letter-spacing:0.5px;
+  }
+  .sublabel {
+    position:absolute; top:28px; left:14px;
+    font-size:10px; color:rgba(148,163,184,0.5);
+  }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div class="cell">
+    <canvas id="c1" width="800" height="800"></canvas>
+    <div class="label">A. Basic Staircase</div>
+    <div class="sublabel">Blocks stack outward, shift right with time gaps</div>
+  </div>
+  <div class="cell">
+    <canvas id="c2" width="800" height="800"></canvas>
+    <div class="label">B. Progressing Deal</div>
+    <div class="sublabel">High activity, scores climbing — tall dense steps</div>
+  </div>
+  <div class="cell">
+    <canvas id="c3" width="800" height="800"></canvas>
+    <div class="label">C. Stalled Deal</div>
+    <div class="sublabel">Sparse activity, flat scores — thin wide gaps</div>
+  </div>
+  <div class="cell">
+    <canvas id="c4" width="800" height="800"></canvas>
+    <div class="label">D. Full Lifecycle</div>
+    <div class="sublabel">Discover to Close — all 6 bands filling over time</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// SHARED CONSTANTS
+// ═══════════════════════════════════════════════════════
+const DIMS = ['pain','power','vision','value','change','control'];
+const DIM_COLORS = {
+  pain:    { h:'#f87171', rgb:[248,113,113] },
+  power:   { h:'#a78bfa', rgb:[167,139,250] },
+  vision:  { h:'#38bdf8', rgb:[56,189,248] },
+  value:   { h:'#4ade80', rgb:[74,222,128] },
+  change:  { h:'#fb923c', rgb:[251,146,60] },
+  control: { h:'#e879f9', rgb:[232,121,249] }
+};
+const DIM_LABELS = ['Pain','Power','Vision','Value','Change','Control'];
+
+// Seeded RNG
+function seededRng(seed) {
+  let s = seed;
+  return () => { s = (s * 16807 + 0) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+// ═══════════════════════════════════════════════════════
+// GENERATE DEAL DATA
+// ═══════════════════════════════════════════════════════
+function generateInteractions(opts) {
+  const rng = seededRng(opts.seed || 42);
+  const interactions = [];
+  let day = 0;
+
+  for (let i = 0; i < opts.count; i++) {
+    // Pick a dimension (weighted)
+    const weights = opts.dimWeights || [1,1,1,1,1,1];
+    const totalW = weights.reduce((a,b) => a+b, 0);
+    let r = rng() * totalW, cumul = 0, dimIdx = 0;
+    for (let d = 0; d < 6; d++) {
+      cumul += weights[d];
+      if (r < cumul) { dimIdx = d; break; }
+    }
+
+    // Time gap
+    const gap = Math.max(1, Math.round(opts.avgGap * (0.3 + rng() * 1.4)));
+    day += gap;
+
+    // Score at this point (driven by curve)
+    const t = opts.count <= 1 ? 1 : i / (opts.count - 1);
+    const score = Math.round(opts.scoreCurve(t, dimIdx, rng));
+
+    // Depth — how much info was shared (drives block thickness)
+    const typeR = rng();
+    const docType = typeR < 0.4 ? 'email' : typeR < 0.65 ? 'call' : typeR < 0.85 ? 'document' : 'meeting';
+    const baseDepth = docType === 'meeting' ? 0.8 : docType === 'call' ? 0.6 : docType === 'document' ? 0.5 : 0.3;
+    const depth = baseDepth + rng() * 0.4 + (score / 5) * 0.3;
+
+    interactions.push({
+      day, dim: DIMS[dimIdx], dimIdx, score, depth: Math.min(depth, 1.5), docType
+    });
+  }
+  return interactions;
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER A RADIAL STAIRCASE
+// ═══════════════════════════════════════════════════════
+function renderStaircase(canvasId, interactions, opts = {}) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const centerR = opts.centerR || 70;
+  const bandGap = 0.008; // angular gap between bands
+  const bandAngle = (Math.PI * 2) / 6; // each dim gets 1/6 of the circle
+  const totalDays = opts.totalDays || Math.max(...interactions.map(i => i.day), 30);
+
+  // Group interactions by dimension
+  const byDim = {};
+  DIMS.forEach(d => byDim[d] = []);
+  interactions.forEach(inp => byDim[inp.dim].push(inp));
+
+  // Sort each dimension by day
+  DIMS.forEach(d => byDim[d].sort((a, b) => a.day - b.day));
+
+  let globalMaxR = centerR;
+
+  // ── Draw each dimension's band ──
+  DIMS.forEach((dim, di) => {
+    const col = DIM_COLORS[dim];
+    const bandStart = -Math.PI / 2 + di * bandAngle + bandGap;
+    const bandEnd = -Math.PI / 2 + (di + 1) * bandAngle - bandGap;
+    const bandWidth = bandEnd - bandStart;
+
+    // Faint band background
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, centerR + 250, bandStart, bandEnd);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.02)`;
+    ctx.fill();
+
+    // Band divider line
+    ctx.beginPath();
+    ctx.moveTo(cx + centerR * Math.cos(bandStart), cy + centerR * Math.sin(bandStart));
+    ctx.lineTo(cx + (centerR + 260) * Math.cos(bandStart), cy + (centerR + 260) * Math.sin(bandStart));
+    ctx.strokeStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.08)`;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+
+    // Dim label at the midpoint of the band
+    const midA = (bandStart + bandEnd) / 2;
+    const labelR = centerR + 260;
+    ctx.save();
+    ctx.translate(cx + labelR * Math.cos(midA), cy + labelR * Math.sin(midA));
+    ctx.rotate(midA + Math.PI / 2);
+    ctx.font = '10px Inter,sans-serif';
+    ctx.fillStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},0.5)`;
+    ctx.textAlign = 'center';
+    ctx.fillText(DIM_LABELS[di], 0, 0);
+    ctx.restore();
+
+    // ── STAIRCASE BLOCKS ──
+    // Each interaction is a block. Left edge anchored to where previous block started.
+    // Right edge shifts right by (days since last interaction / totalDays) * bandWidth.
+    // Block height (radial thickness) driven by depth.
+    // Blocks stack outward from center.
+
+    const dimInteractions = byDim[dim];
+    if (dimInteractions.length === 0) return;
+
+    let currentR = centerR + 4; // start just outside center
+    let leftAngle = bandStart + 0.003; // left edge starts at band start
+
+    dimInteractions.forEach((inp, ii) => {
+      const prevDay = ii > 0 ? dimInteractions[ii - 1].day : 0;
+      const dayGap = inp.day - prevDay;
+
+      // Right edge shifts right proportional to days elapsed
+      const angularShift = (dayGap / totalDays) * bandWidth * 0.9;
+
+      // Block angular extent: from leftAngle to leftAngle + shift
+      // Minimum width so blocks are always visible
+      const blockRight = Math.min(leftAngle + Math.max(angularShift, 0.015), bandEnd - 0.003);
+
+      // Block radial height: driven by depth and score
+      const blockHeight = 6 + inp.depth * 18 + (inp.score / 5) * 12;
+
+      const innerR = currentR;
+      const outerR = currentR + blockHeight;
+
+      // Draw the block
+      const alpha = 0.3 + (inp.score / 5) * 0.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerR, leftAngle, blockRight);
+      ctx.arc(cx, cy, outerR, blockRight, leftAngle, true);
+      ctx.closePath();
+
+      // Gradient fill — brighter at outer edge (growth)
+      const midA = (leftAngle + blockRight) / 2;
+      const gx1 = cx + innerR * Math.cos(midA), gy1 = cy + innerR * Math.sin(midA);
+      const gx2 = cx + outerR * Math.cos(midA), gy2 = cy + outerR * Math.sin(midA);
+      const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+      grad.addColorStop(0, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${alpha * 0.5})`);
+      grad.addColorStop(1, `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${alpha})`);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Subtle border
+      ctx.strokeStyle = `rgba(${col.rgb[0]},${col.rgb[1]},${col.rgb[2]},${alpha * 0.4})`;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+
+      // Score text inside block if big enough
+      if (blockHeight > 10 && (blockRight - leftAngle) > 0.04) {
+        const textR = (innerR + outerR) / 2;
+        const textA = (leftAngle + blockRight) / 2;
+        ctx.save();
+        ctx.font = `${Math.min(10, blockHeight * 0.6)}px Inter,sans-serif`;
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.8})`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(inp.score, cx + textR * Math.cos(textA), cy + textR * Math.sin(textA));
+        ctx.restore();
+      }
+
+      // Track max radius
+      if (outerR > globalMaxR) globalMaxR = outerR;
+
+      // ── STAIRCASE LOGIC ──
+      // Next block stacks ABOVE (outward) — currentR moves to outerR
+      // Left edge stays anchored (same leftAngle) — right side grows
+      // But we also shift right edge by the time gap to next interaction
+      currentR = outerR + 2; // small radial gap between stacked blocks
+      // Left angle stays the same — this is the key staircase behavior
+      // The right edge will be recomputed from the next day gap
+    });
+  });
+
+  // ── Center ball ──
+  const cg = ctx.createRadialGradient(cx - centerR * 0.15, cy - centerR * 0.2, centerR * 0.1, cx, cy, centerR);
+  cg.addColorStop(0, 'hsla(220,30%,60%,0.8)');
+  cg.addColorStop(0.5, 'hsla(220,25%,35%,0.7)');
+  cg.addColorStop(1, 'hsla(220,20%,18%,0.5)');
+  ctx.beginPath(); ctx.arc(cx, cy, centerR, 0, Math.PI * 2);
+  ctx.fillStyle = cg; ctx.fill();
+  ctx.strokeStyle = 'rgba(148,163,184,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+  // Score in center
+  const total = DIMS.reduce((s, d) => {
+    const dimInps = byDim[d];
+    return s + (dimInps.length > 0 ? dimInps[dimInps.length - 1].score : 0);
+  }, 0);
+  ctx.font = 'bold 28px Inter,sans-serif';
+  ctx.fillStyle = '#f8fafc';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(total, cx, cy - 6);
+  ctx.font = '11px Inter,sans-serif';
+  ctx.fillStyle = 'rgba(148,163,184,0.5)';
+  ctx.fillText('/30', cx, cy + 14);
+
+  // ── Concentric reference rings ──
+  for (let r = centerR + 50; r < globalMaxR + 30; r += 50) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(148,163,184,0.03)';
+    ctx.lineWidth = 0.5; ctx.stroke();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// CONCEPT A: BASIC STAIRCASE — Few interactions, clear steps
+// ═══════════════════════════════════════════════════════
+const dataA = generateInteractions({
+  seed: 101,
+  count: 18,
+  avgGap: 5,
+  dimWeights: [2, 1, 1.5, 1, 0.5, 0.5],
+  scoreCurve: (t, di, rng) => Math.min(5, Math.round(1 + t * 3 + rng() * 1.5))
+});
+renderStaircase('c1', dataA, { totalDays: 90 });
+
+// ═══════════════════════════════════════════════════════
+// CONCEPT B: PROGRESSING DEAL — Dense, climbing stairs
+// ═══════════════════════════════════════════════════════
+const dataB = generateInteractions({
+  seed: 202,
+  count: 45,
+  avgGap: 3,
+  dimWeights: [2, 2, 2, 1.5, 1, 1],
+  scoreCurve: (t, di, rng) => Math.min(5, Math.round(t * 4.5 + rng() * 0.8))
+});
+renderStaircase('c2', dataB, { totalDays: 120 });
+
+// ═══════════════════════════════════════════════════════
+// CONCEPT C: STALLED DEAL — Sparse, flat, wide gaps
+// ═══════════════════════════════════════════════════════
+const dataC = generateInteractions({
+  seed: 303,
+  count: 10,
+  avgGap: 12,
+  dimWeights: [2, 0.5, 1, 0.3, 0.2, 0.2],
+  scoreCurve: (t, di, rng) => Math.min(5, Math.round(1 + rng() * 1.5))
+});
+renderStaircase('c3', dataC, { totalDays: 120 });
+
+// ═══════════════════════════════════════════════════════
+// CONCEPT D: FULL LIFECYCLE — Discover to Close
+// ═══════════════════════════════════════════════════════
+const dataD = generateInteractions({
+  seed: 404,
+  count: 65,
+  avgGap: 3,
+  dimWeights: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5],
+  scoreCurve: (t, di, rng) => {
+    // Each dimension ramps at different rates
+    const ramps = [0.7, 0.5, 0.6, 0.4, 0.3, 0.2]; // pain early, control late
+    const offset = ramps[di];
+    const adjusted = Math.max(0, (t - (1 - offset) * 0.3) / (offset + 0.3));
+    return Math.min(5, Math.round(adjusted * 5 + rng() * 0.5));
+  }
+});
+renderStaircase('c4', dataD, { totalDays: 180 });
+
+</script>
+</body>
+</html>

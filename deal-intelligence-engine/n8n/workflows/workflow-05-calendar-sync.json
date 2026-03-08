@@ -1,1 +1,606 @@
-{"updatedAt": "2026-03-02T05:17:03.269Z", "createdAt": "2026-03-01T23:06:15.837Z", "id": "ZT0b4KVNggCp7XjX", "name": "Agent 6: Calendar Ingestion", "description": null, "active": true, "isArchived": false, "nodes": [{"id": "cal-webhook-0001-0000-0000-000000000001", "name": "Webhook: Receive Calendar Event", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [240, 300], "parameters": {"httpMethod": "POST", "path": "calendar-event-ingest", "responseMode": "onReceived", "options": {}}, "webhookId": "cal-webhook-0001-0000-0000-000000000001"}, {"id": "cal-parse-0001-0000-0000-000000000001", "name": "Code: Parse Calendar Event", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [460, 300], "parameters": {"jsCode": "// Parse incoming calendar event from Power Automate\nconst body = $input.first().json.body || $input.first().json;\n\nconst subject = body.subject || body.Subject || '';\nconst start = body.start || body.Start || '';\nconst end = body.end || body.End || '';\nconst organizer = body.organizer || body.Organizer || '';\nconst attendees = body.attendees || body.Attendees || '';\nconst location = body.location || body.Location || '';\nconst bodyContent = body.bodyContent || body.body || body.Body || '';\nconst isAllDay = body.isAllDay || false;\nconst eventId = body.eventId || body.id || body.Id || '';\n\n// Extract attendee emails/names\nlet attendeeList = [];\nif (typeof attendees === 'string' && attendees.length > 0) {\n  attendeeList = attendees.split(';').map(a => a.trim()).filter(a => a.length > 0);\n} else if (Array.isArray(attendees)) {\n  attendeeList = attendees;\n}\n\n// Find first external attendee domain (not clearwatersecurity.com)\nconst internalDomains = ['clearwatersecurity.com'];\nlet externalDomain = null;\nlet externalAttendee = null;\nfor (const a of attendeeList) {\n  const emailMatch = (typeof a === 'string' ? a : JSON.stringify(a)).match(/[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n  if (emailMatch) {\n    const domain = emailMatch[1].toLowerCase();\n    if (!internalDomains.some(d => domain.includes(d))) {\n      externalDomain = domain;\n      externalAttendee = emailMatch[0];\n      break;\n    }\n  }\n}\n\n// Derive deal info from external domain\nfunction domainToCompany(domain) {\n  if (!domain) return 'Unknown';\n  const parts = domain.split('.');\n  const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];\n  return name.charAt(0).toUpperCase() + name.slice(1);\n}\n\nconst year = new Date().getFullYear();\nlet dealId, companyName, senderDomain;\n\nif (externalDomain) {\n  const slug = externalDomain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 32);\n  dealId = 'cw_' + slug + '_' + year;\n  companyName = domainToCompany(externalDomain);\n  senderDomain = externalDomain;\n} else {\n  dealId = 'cw_internal_' + year;\n  companyName = 'Internal';\n  senderDomain = 'clearwatersecurity.com';\n}\n\n// Build embeddable text\nconst embeddableText = [\n  '[CALENDAR EVENT]',\n  'Title: ' + subject,\n  'Date: ' + start,\n  'End: ' + end,\n  'Location: ' + (location || 'Not specified'),\n  'Organizer: ' + organizer,\n  'Attendees: ' + (typeof attendees === 'string' ? attendees : JSON.stringify(attendees)),\n  'Description: ' + (bodyContent || 'None').slice(0, 500),\n  'Deal: ' + companyName + ' (' + dealId + ')',\n].join('\\n');\n\nreturn [{\n  json: {\n    event_id: eventId,\n    deal_id: dealId,\n    company_name: companyName,\n    sender_domain: senderDomain,\n    doc_type: 'calendar_invite',\n    subject,\n    start,\n    end,\n    location,\n    organizer,\n    attendees: typeof attendees === 'string' ? attendees : JSON.stringify(attendees),\n    body_content: (bodyContent || '').slice(0, 1000),\n    is_all_day: isAllDay,\n    is_external: !!externalDomain,\n    embeddable_text: embeddableText\n  }\n}];\n"}}, {"id": "cal-if-external-0001-0000-0000-000000000001", "name": "IF: External Attendee?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [680, 300], "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "is-external-check", "leftValue": "={{ $json.is_external }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}}}, {"id": "cal-upsert-deal-0001-0000-0000-000000000001", "name": "Postgres: Upsert Deal", "type": "n8n-nodes-base.postgres", "typeVersion": 2, "position": [900, 300], "parameters": {"operation": "executeQuery", "query": "INSERT INTO deals (deal_id, company_name, sender_domains, deal_stage, is_active, created_at)\nVALUES ('{{ $json.deal_id }}', '{{ $json.company_name }}', ARRAY['{{ $json.sender_domain }}'], 'Discover', true, NOW())\nON CONFLICT (deal_id) DO UPDATE SET\n  company_name = CASE WHEN deals.company_name = 'Unknown' THEN EXCLUDED.company_name ELSE deals.company_name END,\n  updated_at = NOW()\nRETURNING deal_id, company_name", "options": {}}, "credentials": {"postgres": {"id": "WwO5ZGy91Fw5lSFo", "name": "Clearwater Postgres"}}}, {"id": "cal-insert-event-0001-0000-0000-000000000001", "name": "Postgres: Insert Calendar Event", "type": "n8n-nodes-base.postgres", "typeVersion": 2, "position": [1120, 300], "parameters": {"operation": "executeQuery", "query": "INSERT INTO calendar_events (google_event_id, deal_id, title, start_time, end_time, location, organizer, attendees, meeting_type)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.event_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.subject }}',\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.start }}', '')::timestamptz,\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.end }}', '')::timestamptz,\n  '{{ $('Code: Parse Calendar Event').first().json.location }}',\n  '{{ $('Code: Parse Calendar Event').first().json.organizer }}',\n  ARRAY['{{ $('Code: Parse Calendar Event').first().json.attendees }}'],\n  'meeting'\n)\nON CONFLICT (google_event_id) DO UPDATE SET\n  title = EXCLUDED.title,\n  start_time = EXCLUDED.start_time,\n  end_time = EXCLUDED.end_time,\n  attendees = EXCLUDED.attendees,\n  updated_at = NOW()\nRETURNING (xmax = 0) AS is_new_insert", "options": {}}, "credentials": {"postgres": {"id": "WwO5ZGy91Fw5lSFo", "name": "Clearwater Postgres"}}}, {"id": "cal-if-new-event-0001-0000-0000-000000000001", "name": "IF: New Event?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [1580, 300], "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"}, "conditions": [{"id": "is-new-event-check", "leftValue": "={{ $json.is_new_insert }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}}}, {"id": "cal-trigger-health-0001-0000-0000-000000000001", "name": "HTTP: Trigger Health Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1800, 300], "parameters": {"method": "POST", "url": "http://localhost:5678/webhook/deal-health-trigger", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Parse Calendar Event').first().json.deal_id }) }}", "options": {}}}, {"id": "00975164-fc07-42cd-8d29-0336b7c797f5", "name": "Postgres: Log Calendar Ingestion", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [1140, 300], "parameters": {"operation": "executeQuery", "query": "INSERT INTO ingestion_log (message_id, deal_id, doc_type, sender_email, subject, chunk_count, attribution_confidence, attribution_status, ingested_at)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.event_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  'calendar_invite',\n  '{{ $('Code: Parse Calendar Event').first().json.organizer }}',\n  '{{ $('Code: Parse Calendar Event').first().json.subject }}',\n  1,\n  'high',\n  'confirmed',\n  NOW()\n)\nON CONFLICT (message_id) DO NOTHING", "options": {}}, "credentials": {"postgres": {"id": "WwO5ZGy91Fw5lSFo", "name": "Clearwater Postgres"}}}], "connections": {"Webhook: Receive Calendar Event": {"main": [[{"node": "Code: Parse Calendar Event", "type": "main", "index": 0}]]}, "Code: Parse Calendar Event": {"main": [[{"node": "IF: External Attendee?", "type": "main", "index": 0}]]}, "IF: External Attendee?": {"main": [[{"node": "Postgres: Upsert Deal", "type": "main", "index": 0}], []]}, "Postgres: Upsert Deal": {"main": [[{"node": "Postgres: Log Calendar Ingestion", "type": "main", "index": 0}]]}, "Postgres: Insert Calendar Event": {"main": [[{"node": "IF: New Event?", "type": "main", "index": 0}]]}, "IF: New Event?": {"main": [[{"node": "HTTP: Trigger Health Agent", "type": "main", "index": 0}], []]}, "Postgres: Log Calendar Ingestion": {"main": [[{"node": "Postgres: Insert Calendar Event", "type": "main", "index": 0}]]}}, "settings": {"executionOrder": "v1", "saveManualExecutions": true, "callerPolicy": "workflowsFromSameOwner", "availableInMCP": false, "timeSavedMode": "fixed", "saveDataSuccessExecution": "all", "binaryMode": "separate"}, "staticData": null, "meta": null, "pinData": null, "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "activeVersionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "versionCounter": 71, "triggerCount": 1, "shared": [{"updatedAt": "2026-03-01T23:06:15.837Z", "createdAt": "2026-03-01T23:06:15.837Z", "role": "workflow:owner", "workflowId": "ZT0b4KVNggCp7XjX", "projectId": "AyFYj8ev1hBER3zO", "project": {"updatedAt": "2026-02-26T09:07:37.733Z", "createdAt": "2026-02-26T07:53:31.019Z", "id": "AyFYj8ev1hBER3zO", "name": "Randall raustinholland@gmail.com <raustinholland@gmail.com>", "type": "personal", "icon": null, "description": null, "creatorId": "8a968d0b-280d-4856-b867-bed874846716"}}], "tags": [], "activeVersion": {"updatedAt": "2026-03-02T04:51:01.112Z", "createdAt": "2026-03-02T04:51:01.112Z", "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "workflowId": "ZT0b4KVNggCp7XjX", "nodes": [{"id": "cal-webhook-0001-0000-0000-000000000001", "name": "Webhook: Receive Calendar Event", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [240, 300], "parameters": {"httpMethod": "POST", "path": "calendar-event-ingest", "responseMode": "onReceived", "options": {}}, "webhookId": "cal-webhook-0001-0000-0000-000000000001"}, {"id": "cal-parse-0001-0000-0000-000000000001", "name": "Code: Parse Calendar Event", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [460, 300], "parameters": {"jsCode": "// Parse incoming calendar event from Power Automate\nconst body = $input.first().json.body || $input.first().json;\n\nconst subject = body.subject || body.Subject || '';\nconst start = body.start || body.Start || '';\nconst end = body.end || body.End || '';\nconst organizer = body.organizer || body.Organizer || '';\nconst attendees = body.attendees || body.Attendees || '';\nconst location = body.location || body.Location || '';\nconst bodyContent = body.bodyContent || body.body || body.Body || '';\nconst isAllDay = body.isAllDay || false;\nconst eventId = body.eventId || body.id || body.Id || '';\n\n// Extract attendee emails/names\nlet attendeeList = [];\nif (typeof attendees === 'string' && attendees.length > 0) {\n  attendeeList = attendees.split(';').map(a => a.trim()).filter(a => a.length > 0);\n} else if (Array.isArray(attendees)) {\n  attendeeList = attendees;\n}\n\n// Find first external attendee domain (not clearwatersecurity.com)\nconst internalDomains = ['clearwatersecurity.com'];\nlet externalDomain = null;\nlet externalAttendee = null;\nfor (const a of attendeeList) {\n  const emailMatch = (typeof a === 'string' ? a : JSON.stringify(a)).match(/[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n  if (emailMatch) {\n    const domain = emailMatch[1].toLowerCase();\n    if (!internalDomains.some(d => domain.includes(d))) {\n      externalDomain = domain;\n      externalAttendee = emailMatch[0];\n      break;\n    }\n  }\n}\n\n// Derive deal info from external domain\nfunction domainToCompany(domain) {\n  if (!domain) return 'Unknown';\n  const parts = domain.split('.');\n  const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];\n  return name.charAt(0).toUpperCase() + name.slice(1);\n}\n\nconst year = new Date().getFullYear();\nlet dealId, companyName, senderDomain;\n\nif (externalDomain) {\n  const slug = externalDomain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 32);\n  dealId = 'cw_' + slug + '_' + year;\n  companyName = domainToCompany(externalDomain);\n  senderDomain = externalDomain;\n} else {\n  dealId = 'cw_internal_' + year;\n  companyName = 'Internal';\n  senderDomain = 'clearwatersecurity.com';\n}\n\n// Build embeddable text\nconst embeddableText = [\n  '[CALENDAR EVENT]',\n  'Title: ' + subject,\n  'Date: ' + start,\n  'End: ' + end,\n  'Location: ' + (location || 'Not specified'),\n  'Organizer: ' + organizer,\n  'Attendees: ' + (typeof attendees === 'string' ? attendees : JSON.stringify(attendees)),\n  'Description: ' + (bodyContent || 'None').slice(0, 500),\n  'Deal: ' + companyName + ' (' + dealId + ')',\n].join('\\n');\n\nreturn [{\n  json: {\n    event_id: eventId,\n    deal_id: dealId,\n    company_name: companyName,\n    sender_domain: senderDomain,\n    doc_type: 'calendar_invite',\n    subject,\n    start,\n    end,\n    location,\n    organizer,\n    attendees: typeof attendees === 'string' ? attendees : JSON.stringify(attendees),\n    body_content: (bodyContent || '').slice(0, 1000),\n    is_all_day: isAllDay,\n    is_external: !!externalDomain,\n    embeddable_text: embeddableText\n  }\n}];\n"}}, {"id": "cal-if-external-0001-0000-0000-000000000001", "name": "IF: External Attendee?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [680, 300], "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "is-external-check", "leftValue": "={{ $json.is_external }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}}}, {"id": "cal-upsert-deal-0001-0000-0000-000000000001", "name": "Postgres: Upsert Deal", "type": "n8n-nodes-base.postgres", "typeVersion": 2, "position": [900, 300], "parameters": {"operation": "executeQuery", "query": "INSERT INTO deals (deal_id, company_name, sender_domains, deal_stage, is_active, created_at)\nVALUES ('{{ $json.deal_id }}', '{{ $json.company_name }}', ARRAY['{{ $json.sender_domain }}'], 'Discover', true, NOW())\nON CONFLICT (deal_id) DO UPDATE SET\n  company_name = CASE WHEN deals.company_name = 'Unknown' THEN EXCLUDED.company_name ELSE deals.company_name END,\n  updated_at = NOW()\nRETURNING deal_id, company_name", "options": {}}, "credentials": {"postgres": {"id": "WwO5ZGy91Fw5lSFo", "name": "Clearwater Postgres"}}}, {"id": "cal-insert-event-0001-0000-0000-000000000001", "name": "Postgres: Insert Calendar Event", "type": "n8n-nodes-base.postgres", "typeVersion": 2, "position": [1120, 300], "parameters": {"operation": "executeQuery", "query": "INSERT INTO calendar_events (google_event_id, deal_id, title, start_time, end_time, location, organizer, attendees, meeting_type)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.event_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.subject }}',\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.start }}', '')::timestamptz,\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.end }}', '')::timestamptz,\n  '{{ $('Code: Parse Calendar Event').first().json.location }}',\n  '{{ $('Code: Parse Calendar Event').first().json.organizer }}',\n  ARRAY['{{ $('Code: Parse Calendar Event').first().json.attendees }}'],\n  'meeting'\n)\nON CONFLICT (google_event_id) DO UPDATE SET\n  title = EXCLUDED.title,\n  start_time = EXCLUDED.start_time,\n  end_time = EXCLUDED.end_time,\n  attendees = EXCLUDED.attendees,\n  updated_at = NOW()\nRETURNING (xmax = 0) AS is_new_insert", "options": {}}, "credentials": {"postgres": {"id": "WwO5ZGy91Fw5lSFo", "name": "Clearwater Postgres"}}}, {"id": "cal-if-new-event-0001-0000-0000-000000000001", "name": "IF: New Event?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [1340, 300], "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"}, "conditions": [{"id": "is-new-event-check", "leftValue": "={{ $json.is_new_insert }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}], "combinator": "and"}, "options": {}}}, {"id": "cal-trigger-health-0001-0000-0000-000000000001", "name": "HTTP: Trigger Health Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1560, 300], "parameters": {"method": "POST", "url": "http://localhost:5678/webhook/deal-health-trigger", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Parse Calendar Event').first().json.deal_id }) }}", "options": {}}}], "connections": {"Webhook: Receive Calendar Event": {"main": [[{"node": "Code: Parse Calendar Event", "type": "main", "index": 0}]]}, "Code: Parse Calendar Event": {"main": [[{"node": "IF: External Attendee?", "type": "main", "index": 0}]]}, "IF: External Attendee?": {"main": [[{"node": "Postgres: Upsert Deal", "type": "main", "index": 0}], []]}, "Postgres: Upsert Deal": {"main": [[{"node": "Postgres: Insert Calendar Event", "type": "main", "index": 0}]]}, "Postgres: Insert Calendar Event": {"main": [[{"node": "IF: New Event?", "type": "main", "index": 0}]]}, "IF: New Event?": {"main": [[{"node": "HTTP: Trigger Health Agent", "type": "main", "index": 0}], []]}}, "authors": "Randall raustinholland@gmail.com", "name": null, "description": null, "autosaved": false, "workflowPublishHistory": [{"createdAt": "2026-03-02T04:51:01.141Z", "id": 516, "workflowId": "ZT0b4KVNggCp7XjX", "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "event": "deactivated", "userId": "8a968d0b-280d-4856-b867-bed874846716"}, {"createdAt": "2026-03-02T04:51:01.150Z", "id": 517, "workflowId": "ZT0b4KVNggCp7XjX", "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "event": "activated", "userId": "8a968d0b-280d-4856-b867-bed874846716"}, {"createdAt": "2026-03-02T05:17:03.328Z", "id": 534, "workflowId": "ZT0b4KVNggCp7XjX", "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "event": "deactivated", "userId": "8a968d0b-280d-4856-b867-bed874846716"}, {"createdAt": "2026-03-02T05:17:03.341Z", "id": 535, "workflowId": "ZT0b4KVNggCp7XjX", "versionId": "a70d3272-c382-4749-94a0-4b96c4c01302", "event": "activated", "userId": "8a968d0b-280d-4856-b867-bed874846716"}]}}
+{
+  "id": "ZT0b4KVNggCp7XjX",
+  "name": "CW-12: Calendar Sync",
+  "active": true,
+  "nodes": [
+    {
+      "id": "cal-webhook-0001-0000-0000-000000000001",
+      "name": "Webhook: Receive Calendar Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calendar-event-ingest",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "cal-webhook-0001-0000-0000-000000000001"
+    },
+    {
+      "id": "cal-parse-0001-0000-0000-000000000001",
+      "name": "Code: Parse Calendar Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// Parse incoming calendar event from Power Automate\nconst body = $input.first().json.body || $input.first().json;\n\nconst subject = body.subject || body.Subject || '';\nconst start = body.start || body.Start || '';\nconst end = body.end || body.End || '';\nconst organizer = body.organizer || body.Organizer || '';\nconst attendees = body.attendees || body.Attendees || '';\nconst location = body.location || body.Location || '';\nconst bodyContent = body.bodyContent || body.body || body.Body || '';\nconst isAllDay = body.isAllDay || false;\nconst eventId = body.eventId || body.id || body.Id || '';\n\n// Extract attendee emails/names\nlet attendeeList = [];\nif (typeof attendees === 'string' && attendees.length > 0) {\n  attendeeList = attendees.split(';').map(a => a.trim()).filter(a => a.length > 0);\n} else if (Array.isArray(attendees)) {\n  attendeeList = attendees;\n}\n\n// Find first external attendee domain (not clearwatersecurity.com)\nconst internalDomains = ['clearwatersecurity.com'];\nlet externalDomain = null;\nlet externalAttendee = null;\nfor (const a of attendeeList) {\n  const emailMatch = (typeof a === 'string' ? a : JSON.stringify(a)).match(/[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n  if (emailMatch) {\n    const domain = emailMatch[1].toLowerCase();\n    if (!internalDomains.some(d => domain.includes(d))) {\n      externalDomain = domain;\n      externalAttendee = emailMatch[0];\n      break;\n    }\n  }\n}\n\n// Derive deal info from external domain\nfunction domainToCompany(domain) {\n  if (!domain) return 'Unknown';\n  const parts = domain.split('.');\n  const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];\n  return name.charAt(0).toUpperCase() + name.slice(1);\n}\n\nconst year = new Date().getFullYear();\nlet dealId, companyName, senderDomain;\n\nif (externalDomain) {\n  const slug = externalDomain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 32);\n  dealId = 'cw_' + slug + '_' + year;\n  companyName = domainToCompany(externalDomain);\n  senderDomain = externalDomain;\n} else {\n  dealId = 'cw_internal_' + year;\n  companyName = 'Internal';\n  senderDomain = 'clearwatersecurity.com';\n}\n\n// Build embeddable text\nconst embeddableText = [\n  '[CALENDAR EVENT]',\n  'Title: ' + subject,\n  'Date: ' + start,\n  'End: ' + end,\n  'Location: ' + (location || 'Not specified'),\n  'Organizer: ' + organizer,\n  'Attendees: ' + (typeof attendees === 'string' ? attendees : JSON.stringify(attendees)),\n  'Description: ' + (bodyContent || 'None').slice(0, 500),\n  'Deal: ' + companyName + ' (' + dealId + ')',\n].join('\\n');\n\nreturn [{\n  json: {\n    event_id: eventId,\n    deal_id: dealId,\n    company_name: companyName,\n    sender_domain: senderDomain,\n    doc_type: 'calendar_invite',\n    subject,\n    start,\n    end,\n    location,\n    organizer,\n    attendees: typeof attendees === 'string' ? attendees : JSON.stringify(attendees),\n    body_content: (bodyContent || '').slice(0, 1000),\n    is_all_day: isAllDay,\n    is_external: !!externalDomain,\n    embeddable_text: embeddableText\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "cal-if-external-0001-0000-0000-000000000001",
+      "name": "IF: External Attendee?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-external-check",
+              "leftValue": "={{ $json.is_external }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ca1c12c0-5000-4000-a000-000000000005",
+      "name": "Postgres: Upsert Deal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO deals (deal_id, company_name, sender_domains, deal_stage, deal_owner, created_at, updated_at)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.company_name }}',\n  ARRAY['{{ $('Code: Parse Calendar Event').first().json.sender_domain }}'],\n  'discover',\n  'Austin Hollins',\n  NOW(),\n  NOW()\n)\nON CONFLICT (deal_id) DO UPDATE SET\n  updated_at = NOW()\nRETURNING xmax",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "00975164-fc07-42cd-8d29-0336b7c797f5",
+      "name": "Postgres: Log Calendar Ingestion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ingestion_log (message_id, deal_id, doc_type, sender_email, subject, chunk_count, attribution_confidence, attribution_status, ingested_at)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.event_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  'calendar_invite',\n  '{{ $('Code: Parse Calendar Event').first().json.organizer }}',\n  '{{ $('Code: Parse Calendar Event').first().json.subject }}',\n  1,\n  'high',\n  'confirmed',\n  NOW()\n)\nON CONFLICT (message_id) DO NOTHING",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cal-insert-event-0001-0000-0000-000000000001",
+      "name": "Postgres: Insert Calendar Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1580, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO calendar_events (google_event_id, deal_id, title, start_time, end_time, location, organizer, attendees, meeting_type)\nVALUES (\n  '{{ $('Code: Parse Calendar Event').first().json.event_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.deal_id }}',\n  '{{ $('Code: Parse Calendar Event').first().json.subject }}',\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.start }}', '')::timestamptz,\n  NULLIF('{{ $('Code: Parse Calendar Event').first().json.end }}', '')::timestamptz,\n  '{{ $('Code: Parse Calendar Event').first().json.location }}',\n  '{{ $('Code: Parse Calendar Event').first().json.organizer }}',\n  ARRAY['{{ $('Code: Parse Calendar Event').first().json.attendees }}'],\n  'meeting'\n)\nON CONFLICT (google_event_id) DO UPDATE SET\n  title = EXCLUDED.title,\n  start_time = EXCLUDED.start_time,\n  end_time = EXCLUDED.end_time,\n  attendees = EXCLUDED.attendees,\n  updated_at = NOW()\nRETURNING (xmax = 0) AS is_new_insert",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cal-if-new-event-0001-0000-0000-000000000001",
+      "name": "IF: New Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1800, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "is-new-event-check",
+              "leftValue": "={{ $json.is_new_insert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cal-check-doc-types-0001",
+      "name": "Postgres: Check Doc Types",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2020, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT doc_type FROM ingestion_log WHERE deal_id = '{{ $('Code: Parse Calendar Event').first().json.deal_id }}' AND doc_type != 'calendar_invite' LIMIT 1",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cal-if-has-real-content-0001",
+      "name": "IF: Has Real Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2240, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-real-content-check",
+              "leftValue": "={{ $input.first().json.doc_type }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cal-trigger-health-0001-0000-0000-000000000001",
+      "name": "HTTP: Trigger Health Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2460, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/deal-health-trigger",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $('Code: Parse Calendar Event').first().json.deal_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "cal-build-zero-score-0001",
+      "name": "Code: Build Zero Score SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, 400],
+      "parameters": {
+        "jsCode": "// Build zero-score placeholder INSERT for calendar-only deals\nconst dealId = $('Code: Parse Calendar Event').first().json.deal_id;\n\nconst sql = `INSERT INTO deal_health (deal_id, scored_at, trigger_type, pain_score, power_score, vision_score, value_score, change_score, control_score, p2v2c2_total, pe_sponsor_score, critical_activity_stage, general_narrative) VALUES ('${dealId}', NOW(), 'calendar_only', 0, 0, 0, 0, 0, 0, 0, 0, '1A', 'New deal created from calendar invite. No scoring data available yet.')`;\n\nreturn [{ json: { query: sql, deal_id: dealId } }];\n"
+      }
+    },
+    {
+      "id": "cal-insert-zero-score-0001",
+      "name": "Postgres: Insert Zero Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2680, 400],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Pushover alert for calendar sync\nconst data = $('Code: Parse Calendar Event').first().json;\nconst attendeeCount = (data.attendees || '').split(';').filter(a => a.trim()).length;\nconst startDate = data.start ? new Date(data.start).toLocaleDateString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : 'TBD';\n\nreturn [{\n  json: {\n    title: 'Meeting synced',\n    message: `${data.subject} — ${attendeeCount} attendees, ${startDate}`,\n    priority: '0'\n  }\n}];\n"
+      },
+      "id": "cal-alert-code",
+      "name": "Code: Build Calendar Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 560]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+            },
+            {
+              "name": "user",
+              "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.priority || '0' }}"
+            },
+            {
+              "name": "sound",
+              "value": "pushover"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pushover-cal-alert",
+      "name": "Pushover: Calendar Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2020, 560]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "new-deal-check",
+              "leftValue": "={{ $json.xmax }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-new-deal",
+      "name": "IF: New Deal Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1120, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Pushover alert for new deal creation\nconst data = $('Code: Parse Calendar Event').first().json;\n\nreturn [{\n  json: {\n    title: 'New deal created',\n    message: `${data.company_name} — created from calendar invite`,\n    priority: '1'\n  }\n}];\n"
+      },
+      "id": "new-deal-code",
+      "name": "Code: Build New Deal Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 560]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendHeaders": false,
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "a4fzbepw4phpxn5kirrvewcv7di5nh"
+            },
+            {
+              "name": "user",
+              "value": "ur5bbr58fnkhocxaqsgowdq4hz393h"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.priority || '0' }}"
+            },
+            {
+              "name": "sound",
+              "value": "pushover"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pushover-new-deal",
+      "name": "Pushover: New Deal Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 560]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO deal_notifications (deal_id, notification_type, summary, context) VALUES ('{{ $('Code: Parse Calendar Event').first().json.deal_id }}', 'calendar_alert', '{{ $('Code: Build Calendar Alert').first().json.message }}', '{\"event_type\": \"calendar_invite\"}'::jsonb)",
+        "options": {}
+      },
+      "id": "cw12-log-cal-alert",
+      "name": "Postgres: Log Calendar Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2240, 560],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO deal_notifications (deal_id, notification_type, summary, context) VALUES ('{{ $('Code: Parse Calendar Event').first().json.deal_id }}', 'new_deal', '{{ $('Code: Build New Deal Alert').first().json.message }}', '{\"source\": \"calendar_invite\"}'::jsonb)",
+        "options": {}
+      },
+      "id": "cw12-log-new-deal-alert",
+      "name": "Postgres: Log New Deal Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 560],
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Receive Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Code: Parse Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Parse Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "IF: External Attendee?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: External Attendee?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Deal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Postgres: Upsert Deal": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Log Calendar Ingestion",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF: New Deal Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Log Calendar Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "IF: New Event?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code: Build Calendar Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: New Event?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Check Doc Types",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Postgres: Check Doc Types": {
+      "main": [
+        [
+          {
+            "node": "IF: Has Real Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Has Real Content?": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Trigger Health Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: Build Zero Score SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Zero Score SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Zero Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Calendar Alert": {
+      "main": [
+        [
+          {
+            "node": "Pushover: Calendar Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: New Deal Created?": {
+      "main": [
+        [
+          {
+            "node": "Code: Build New Deal Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build New Deal Alert": {
+      "main": [
+        [
+          {
+            "node": "Pushover: New Deal Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pushover: Calendar Alert": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Log Calendar Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pushover: New Deal Alert": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Log New Deal Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "saveDataSuccessExecution": "all",
+    "binaryMode": "separate"
+  }
+}

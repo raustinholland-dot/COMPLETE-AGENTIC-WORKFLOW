@@ -1,0 +1,291 @@
+{
+  "updatedAt": "2026-03-05T05:54:57.599Z",
+  "createdAt": "2026-02-28T08:01:24.416Z",
+  "id": "lLBrmwzHelkLW82x",
+  "name": "CW-06: Tool \u2014 Database Query",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "cw04d-0001-0000-0000-000000000001",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "cw04d-0002-0000-0000-000000000002",
+      "name": "Code: Route Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Read inputs passed from the toolWorkflow caller\nconst input = $input.first().json;\nconst queryType = input.query_type || 'deal_health_all';\nconst dealId = input.deal_id || null;\nconst action = input.action || null;\nconst messageId = input.message_id || null;\nconst resolvedDealId = input.resolved_deal_id || null;\nconst resolution = input.resolution || 'confirmed';\n\nlet sql;\n\nswitch (queryType) {\n  case 'deal_health_single':\n    if (!dealId) throw new Error('deal_health_single requires deal_id');\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.deal_owner,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.champion_title,\n             dh.executive_sponsor_name, dh.executive_sponsor_title,\n             dh.pe_sponsor_score,\n             dh.dap_exists, dh.dap_agreed, dh.dap_status,\n             dh.dap_milestones_complete, dh.dap_has_14_day_gap,\n             dh.dap_next_milestone, dh.dap_next_milestone_date, dh.dap_summary,\n             dh.risks, dh.next_step, dh.next_step_date,\n             dh.call_summary, dh.internal_team_update,\n             dh.trend_direction, dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.deal_id = '${dealId}'\n           LIMIT 1`;\n    break;\n\n  case 'deal_health_all':\n    sql = `SELECT d.deal_id, d.company_name, d.deal_stage,\n             d.deal_value_usd, d.forecast_category,\n             dh.p2v2c2_total, dh.critical_activity_stage,\n             dh.champion_name, dh.executive_sponsor_name,\n             dh.next_step, dh.next_step_date, dh.trend_direction,\n             dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           ORDER BY dh.p2v2c2_total DESC NULLS LAST`;\n    break;\n\n  case 'pipeline_summary':\n    sql = `SELECT d.deal_stage, d.forecast_category,\n             COUNT(*) AS deal_count,\n             SUM(d.deal_value_usd) AS total_value,\n             ROUND(AVG(dh.p2v2c2_total), 1) AS avg_p2v2c2,\n             COUNT(CASE WHEN dh.trend_direction = 'declining' THEN 1 END) AS declining_deals\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           GROUP BY d.deal_stage, d.forecast_category\n           ORDER BY d.deal_stage`;\n    break;\n\n  case 'attribution_queue':\n    if (action === 'confirm_attribution') {\n      if (!messageId) throw new Error('confirm_attribution requires message_id');\n      sql = `UPDATE attribution_queue\n             SET resolution = '${resolution}',\n                 resolved_deal_id = ${resolvedDealId ? `'${resolvedDealId}'` : 'NULL'},\n                 resolved_at = NOW()\n             WHERE message_id = '${messageId}'\n             RETURNING id, message_id, resolution, resolved_deal_id`;\n    } else {\n      sql = `SELECT id, message_id, sender_email, sender_domain, subject,\n               ai_guess_deal_id, ai_guess_company, ai_confidence, doc_type, queued_at\n             FROM attribution_queue\n             WHERE resolution = 'pending'\n             ORDER BY queued_at ASC\n             LIMIT 20`;\n    }\n    break;\n\n  case 'pending_drafts':\n    sql = `SELECT ol.id, ol.deal_id, d.company_name, ol.output_type,\n             ol.triggered_by, ol.sent_at, ol.subject,\n             ol.full_content, ol.recipient_email, ol.recipient_name\n           FROM outputs_log ol\n           JOIN deals d ON d.deal_id = ol.deal_id\n           WHERE ol.status = 'draft'\n           ORDER BY ol.sent_at ASC`;\n    break;\n\n\n  case 'get_traces': {\n    const sessionId = input.session_id || null;\n    if (sessionId) {\n      sql = `SELECT id, session_id, deal_id, user_input,\n               LEFT(agent_output, 300) as agent_output_preview,\n               think_steps, tool_calls,\n               total_tokens, total_duration_ms, tools_called_count,\n               status, created_at\n             FROM agent_traces\n             WHERE session_id = '${sessionId}'\n             ORDER BY created_at DESC\n             LIMIT 20`;\n    } else {\n      sql = `SELECT id, session_id, deal_id, user_input,\n               LEFT(agent_output, 200) as agent_output_preview,\n               think_steps, tool_calls,\n               total_tokens, total_duration_ms,\n               status, created_at\n             FROM agent_traces\n             ORDER BY created_at DESC\n             LIMIT 10`;\n    }\n    break;\n  }\n\n  default:\n    throw new Error(`Unknown query_type: ${queryType}`);\n}\n\nreturn [{ json: { query_type: queryType, sql, deal_id: dealId } }];\n"
+      }
+    },
+    {
+      "id": "cw04d-0003-0000-0000-000000000003",
+      "name": "Postgres: Execute Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "WwO5ZGy91Fw5lSFo",
+          "name": "Clearwater Postgres"
+        }
+      }
+    },
+    {
+      "id": "cw04d-0004-0000-0000-000000000004",
+      "name": "Code: Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(item => item.json).filter(r => r && Object.keys(r).length > 0 && !Object.values(r).every(v => v === null || v === undefined));\nconst queryType = $('Code: Route Query').first().json.query_type;\nconst row_count = rows.length;\n\nif (row_count === 0) {\n  if (queryType === 'pending_drafts') return [{ json: { result: 'No pending drafts.' } }];\n  if (queryType === 'attribution_queue') return [{ json: { result: 'Attribution queue is empty.' } }];\n  return [{ json: { result: `No data found for query_type: ${queryType}` } }];\n}\n\nif (queryType === 'deal_health_single') {\n  const d = rows[0];\n  const total = d.p2v2c2_total || 0;\n  const scoredAt = d.scored_at ? new Date(d.scored_at).toISOString().split('T')[0] : 'never';\n  const result = `## Deal Health: ${d.company_name} (${d.deal_id})\\n\\n**Stage:** ${d.deal_stage || 'Unknown'} | **Salesforce:** ${d.salesforce_stage || 'N/A'}\\n**Scored:** ${scoredAt} | **Trend:** ${d.trend_direction || 'unknown'} (${(d.score_vs_previous || 0) >= 0 ? '+' : ''}${d.score_vs_previous || 0} pts)\\n\\n### P2V2C2 Scores (${total}/30)\\n| Dimension | Score |\\n|---|---|\\n| Pain | ${d.pain_score || 0}/5 |\\n| Power | ${d.power_score || 0}/5 |\\n| Vision | ${d.vision_score || 0}/5 |\\n| Value | ${d.value_score || 0}/5 |\\n| Change | ${d.change_score || 0}/5 |\\n| Control | ${d.control_score || 0}/5 |\\n\\n**PE Sponsor Score:** ${d.pe_sponsor_score || 0}/5\\n**Critical Activity:** ${d.critical_activity_stage || 'Not set'}\\n\\n### Stakeholders\\n- **Champion:** ${d.champion_name || 'Not identified'} ${d.champion_title ? '(' + d.champion_title + ')' : ''}\\n- **Exec Sponsor:** ${d.executive_sponsor_name || 'Not identified'} ${d.executive_sponsor_title ? '(' + d.executive_sponsor_title + ')' : ''}\\n\\n### DAP\\n- Exists: ${d.dap_exists ? 'Yes' : 'No'} | Agreed: ${d.dap_agreed ? 'Yes' : 'No'} | Status: ${d.dap_status || 'N/A'}\\n- Milestones: ${d.dap_milestones_complete || 0}/14 | 14-Day Gap: ${d.dap_has_14_day_gap ? 'VIOLATION' : 'OK'}\\n- Next: ${d.dap_next_milestone || 'N/A'} (${d.dap_next_milestone_date || 'No date'})\\n\\n### Next Step\\n${d.next_step || 'Not set'} (by ${d.next_step_date || 'TBD'})\\n\\n### Risks\\n${Array.isArray(d.risks) && d.risks.length > 0 ? d.risks.map(r => '- ' + r).join('\\n') : 'None documented'}\\n\\n### Call Summary\\n${d.call_summary || 'No summary available'}\\n\\n### Internal Team Update\\n${d.internal_team_update || 'Not generated yet'}`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'deal_health_all') {\n  const lines = rows.map(d => {\n    const total = d.p2v2c2_total !== null ? d.p2v2c2_total : '\u2014';\n    const trend = d.trend_direction === 'improving' ? '\u2191' : d.trend_direction === 'declining' ? '\u2193' : '\u2192';\n    const scored = d.scored_at ? new Date(d.scored_at).toISOString().split('T')[0] : 'never';\n    return `| ${d.company_name} | ${d.deal_id} | ${d.deal_stage || '?'} | ${total}/30 | ${trend} | ${d.next_step ? d.next_step.slice(0,40) : '\u2014'} | ${scored} |`;\n  });\n  const result = `## All Active Deals \u2014 P2V2C2 Dashboard\\n\\n| Company | Deal ID | Stage | Score | Trend | Next Step | Last Scored |\\n|---|---|---|---|---|---|---|\\n${lines.join('\\n')}\\n\\n${row_count} active deal(s).`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'pipeline_summary') {\n  const lines = rows.map(d =>\n    `| ${d.deal_stage || '?'} | ${d.forecast_category || '?'} | ${d.deal_count} | $${Number(d.total_value || 0).toLocaleString()} | ${d.avg_p2v2c2 || '\u2014'}/30 | ${d.declining_deals} |`\n  );\n  const result = `## Pipeline Summary\\n\\n| Stage | Forecast | Deals | Total Value | Avg P2V2C2 | Declining |\\n|---|---|---|---|---|---|\\n${lines.join('\\n')}`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'attribution_queue') {\n  const realRows = rows.filter(r => r.message_id != null);\n  if (realRows.length === 0) return [{ json: { result: 'Attribution queue is empty.' } }];\n  const items = realRows.map((r, i) => {\n    const date = r.queued_at ? new Date(r.queued_at).toISOString().split('T')[0] : 'unknown';\n    const confidence = r.ai_confidence ? (Number(r.ai_confidence) * 100).toFixed(0) + '%' : 'unknown';\n    return `${i + 1}. \"${r.subject || '(no subject)'}\"\\n   From: ${r.sender_email || 'unknown'} (${r.sender_domain || '?'})\\n   AI Guess: ${r.ai_guess_company || 'unknown'} | Confidence: ${confidence}\\n   Doc Type: ${r.doc_type || 'unknown'} | Queued: ${date}\\n   Message ID: ${r.message_id}`;\n  }).join('\\n\\n');\n  const result = `## Attribution Queue \u2014 ${realRows.length} Pending Item(s)\\n\\n${items}\\n\\nTo confirm, tell me which deal each belongs to.`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'pending_drafts') {\n  const realRows = rows.filter(r => r.id != null);\n  if (realRows.length === 0) return [{ json: { result: 'No pending drafts.' } }];\n  const now = new Date();\n  const items = realRows.map((r, i) => {\n    const sentAt = r.sent_at ? new Date(r.sent_at) : null;\n    const hoursAgo = sentAt ? Math.round((now - sentAt) / 3600000) : '?';\n    let entry = `### Draft ${i + 1} \u2014 ${r.output_type} | ID: ${r.id} | ${r.company_name} | ~${hoursAgo}h ago`;\n    if (r.subject) entry += `\\n**Subject:** ${r.subject}`;\n    if (r.recipient_name) entry += `\\n**To:** ${r.recipient_name} <${r.recipient_email || ''}>`;\n    if (r.full_content) entry += `\\n\\n${r.full_content}`;\n    return entry;\n  });\n  const result = `PENDING_DRAFTS_COUNT:${realRows.length}\\n\\n${items.join('\\n\\n---\\n\\n')}`;\n  return [{ json: { result, pending_draft_count: realRows.length } }];\n}\n\nconst r = rows[0];\nconst result = `Attribution updated: message_id ${r.message_id} resolved as ${r.resolution}, assigned to: ${r.resolved_deal_id || 'none'}.`;\nreturn [{ json: { result } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Route Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Route Query": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Execute Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Execute Query": {
+      "main": [
+        [
+          {
+            "node": "Code: Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+  "activeVersionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+  "versionCounter": 144,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-02-28T08:01:24.416Z",
+      "createdAt": "2026-02-28T08:01:24.416Z",
+      "role": "workflow:owner",
+      "workflowId": "lLBrmwzHelkLW82x",
+      "projectId": "AyFYj8ev1hBER3zO",
+      "project": {
+        "updatedAt": "2026-02-26T09:07:37.733Z",
+        "createdAt": "2026-02-26T07:53:31.019Z",
+        "id": "AyFYj8ev1hBER3zO",
+        "name": "Randall raustinholland@gmail.com <raustinholland@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-02T07:41:45.055Z",
+    "createdAt": "2026-03-02T07:41:45.055Z",
+    "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+    "workflowId": "lLBrmwzHelkLW82x",
+    "nodes": [
+      {
+        "id": "cw04d-0001-0000-0000-000000000001",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1,
+        "position": [
+          240,
+          300
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "cw04d-0002-0000-0000-000000000002",
+        "name": "Code: Route Query",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          480,
+          300
+        ],
+        "parameters": {
+          "jsCode": "// Read inputs passed from the toolWorkflow caller\nconst input = $input.first().json;\nconst queryType = input.query_type || 'deal_health_all';\nconst dealId = input.deal_id || null;\nconst action = input.action || null;\nconst messageId = input.message_id || null;\nconst resolvedDealId = input.resolved_deal_id || null;\nconst resolution = input.resolution || 'confirmed';\n\nlet sql;\n\nswitch (queryType) {\n  case 'deal_health_single':\n    if (!dealId) throw new Error('deal_health_single requires deal_id');\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.deal_owner,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.champion_title,\n             dh.executive_sponsor_name, dh.executive_sponsor_title,\n             dh.pe_sponsor_score,\n             dh.dap_exists, dh.dap_agreed, dh.dap_status,\n             dh.dap_milestones_complete, dh.dap_has_14_day_gap,\n             dh.dap_next_milestone, dh.dap_next_milestone_date, dh.dap_summary,\n             dh.risks, dh.next_step, dh.next_step_date,\n             dh.call_summary, dh.internal_team_update,\n             dh.trend_direction, dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.deal_id = '${dealId}'\n           LIMIT 1`;\n    break;\n\n  case 'deal_health_all':\n    sql = `SELECT d.deal_id, d.company_name, d.deal_stage,\n             d.deal_value_usd, d.forecast_category,\n             dh.p2v2c2_total, dh.critical_activity_stage,\n             dh.champion_name, dh.executive_sponsor_name,\n             dh.next_step, dh.next_step_date, dh.trend_direction,\n             dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           ORDER BY dh.p2v2c2_total DESC NULLS LAST`;\n    break;\n\n  case 'pipeline_summary':\n    sql = `SELECT d.deal_stage, d.forecast_category,\n             COUNT(*) AS deal_count,\n             SUM(d.deal_value_usd) AS total_value,\n             ROUND(AVG(dh.p2v2c2_total), 1) AS avg_p2v2c2,\n             COUNT(CASE WHEN dh.trend_direction = 'declining' THEN 1 END) AS declining_deals\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           GROUP BY d.deal_stage, d.forecast_category\n           ORDER BY d.deal_stage`;\n    break;\n\n  case 'attribution_queue':\n    if (action === 'confirm_attribution') {\n      if (!messageId) throw new Error('confirm_attribution requires message_id');\n      sql = `UPDATE attribution_queue\n             SET resolution = '${resolution}',\n                 resolved_deal_id = ${resolvedDealId ? `'${resolvedDealId}'` : 'NULL'},\n                 resolved_at = NOW()\n             WHERE message_id = '${messageId}'\n             RETURNING id, message_id, resolution, resolved_deal_id`;\n    } else {\n      sql = `SELECT id, message_id, sender_email, sender_domain, subject,\n               ai_guess_deal_id, ai_guess_company, ai_confidence, doc_type, queued_at\n             FROM attribution_queue\n             WHERE resolution = 'pending'\n             ORDER BY queued_at ASC\n             LIMIT 20`;\n    }\n    break;\n\n  case 'pending_drafts':\n    sql = `SELECT ol.id, ol.deal_id, d.company_name, ol.output_type,\n             ol.triggered_by, ol.sent_at, ol.subject,\n             ol.full_content, ol.recipient_email, ol.recipient_name\n           FROM outputs_log ol\n           JOIN deals d ON d.deal_id = ol.deal_id\n           WHERE ol.status = 'draft'\n           ORDER BY ol.sent_at ASC`;\n    break;\n\n  default:\n    throw new Error(`Unknown query_type: ${queryType}`);\n}\n\nreturn [{ json: { query_type: queryType, sql, deal_id: dealId } }];\n"
+        }
+      },
+      {
+        "id": "cw04d-0003-0000-0000-000000000003",
+        "name": "Postgres: Execute Query",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2,
+        "position": [
+          720,
+          300
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "={{ $json.sql }}",
+          "options": {}
+        },
+        "credentials": {
+          "postgres": {
+            "id": "WwO5ZGy91Fw5lSFo",
+            "name": "Clearwater Postgres"
+          }
+        }
+      },
+      {
+        "id": "cw04d-0004-0000-0000-000000000004",
+        "name": "Code: Format Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          960,
+          300
+        ],
+        "parameters": {
+          "jsCode": "const rows = $input.all().map(item => item.json).filter(r => r && Object.keys(r).length > 0 && !Object.values(r).every(v => v === null || v === undefined));\nconst queryType = $('Code: Route Query').first().json.query_type;\nconst row_count = rows.length;\n\nif (row_count === 0) {\n  if (queryType === 'pending_drafts') return [{ json: { result: 'No pending drafts.' } }];\n  if (queryType === 'attribution_queue') return [{ json: { result: 'Attribution queue is empty.' } }];\n  return [{ json: { result: `No data found for query_type: ${queryType}` } }];\n}\n\nif (queryType === 'deal_health_single') {\n  const d = rows[0];\n  const total = d.p2v2c2_total || 0;\n  const scoredAt = d.scored_at ? new Date(d.scored_at).toISOString().split('T')[0] : 'never';\n  const result = `## Deal Health: ${d.company_name} (${d.deal_id})\\n\\n**Stage:** ${d.deal_stage || 'Unknown'} | **Salesforce:** ${d.salesforce_stage || 'N/A'}\\n**Scored:** ${scoredAt} | **Trend:** ${d.trend_direction || 'unknown'} (${(d.score_vs_previous || 0) >= 0 ? '+' : ''}${d.score_vs_previous || 0} pts)\\n\\n### P2V2C2 Scores (${total}/30)\\n| Dimension | Score |\\n|---|---|\\n| Pain | ${d.pain_score || 0}/5 |\\n| Power | ${d.power_score || 0}/5 |\\n| Vision | ${d.vision_score || 0}/5 |\\n| Value | ${d.value_score || 0}/5 |\\n| Change | ${d.change_score || 0}/5 |\\n| Control | ${d.control_score || 0}/5 |\\n\\n**PE Sponsor Score:** ${d.pe_sponsor_score || 0}/5\\n**Critical Activity:** ${d.critical_activity_stage || 'Not set'}\\n\\n### Stakeholders\\n- **Champion:** ${d.champion_name || 'Not identified'} ${d.champion_title ? '(' + d.champion_title + ')' : ''}\\n- **Exec Sponsor:** ${d.executive_sponsor_name || 'Not identified'} ${d.executive_sponsor_title ? '(' + d.executive_sponsor_title + ')' : ''}\\n\\n### DAP\\n- Exists: ${d.dap_exists ? 'Yes' : 'No'} | Agreed: ${d.dap_agreed ? 'Yes' : 'No'} | Status: ${d.dap_status || 'N/A'}\\n- Milestones: ${d.dap_milestones_complete || 0}/14 | 14-Day Gap: ${d.dap_has_14_day_gap ? 'VIOLATION' : 'OK'}\\n- Next: ${d.dap_next_milestone || 'N/A'} (${d.dap_next_milestone_date || 'No date'})\\n\\n### Next Step\\n${d.next_step || 'Not set'} (by ${d.next_step_date || 'TBD'})\\n\\n### Risks\\n${Array.isArray(d.risks) && d.risks.length > 0 ? d.risks.map(r => '- ' + r).join('\\n') : 'None documented'}\\n\\n### Call Summary\\n${d.call_summary || 'No summary available'}\\n\\n### Internal Team Update\\n${d.internal_team_update || 'Not generated yet'}`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'deal_health_all') {\n  const lines = rows.map(d => {\n    const total = d.p2v2c2_total !== null ? d.p2v2c2_total : '\u2014';\n    const trend = d.trend_direction === 'improving' ? '\u2191' : d.trend_direction === 'declining' ? '\u2193' : '\u2192';\n    const scored = d.scored_at ? new Date(d.scored_at).toISOString().split('T')[0] : 'never';\n    return `| ${d.company_name} | ${d.deal_id} | ${d.deal_stage || '?'} | ${total}/30 | ${trend} | ${d.next_step ? d.next_step.slice(0,40) : '\u2014'} | ${scored} |`;\n  });\n  const result = `## All Active Deals \u2014 P2V2C2 Dashboard\\n\\n| Company | Deal ID | Stage | Score | Trend | Next Step | Last Scored |\\n|---|---|---|---|---|---|---|\\n${lines.join('\\n')}\\n\\n${row_count} active deal(s).`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'pipeline_summary') {\n  const lines = rows.map(d =>\n    `| ${d.deal_stage || '?'} | ${d.forecast_category || '?'} | ${d.deal_count} | $${Number(d.total_value || 0).toLocaleString()} | ${d.avg_p2v2c2 || '\u2014'}/30 | ${d.declining_deals} |`\n  );\n  const result = `## Pipeline Summary\\n\\n| Stage | Forecast | Deals | Total Value | Avg P2V2C2 | Declining |\\n|---|---|---|---|---|---|\\n${lines.join('\\n')}`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'attribution_queue') {\n  const realRows = rows.filter(r => r.message_id != null);\n  if (realRows.length === 0) return [{ json: { result: 'Attribution queue is empty.' } }];\n  const items = realRows.map((r, i) => {\n    const date = r.queued_at ? new Date(r.queued_at).toISOString().split('T')[0] : 'unknown';\n    const confidence = r.ai_confidence ? (Number(r.ai_confidence) * 100).toFixed(0) + '%' : 'unknown';\n    return `${i + 1}. \"${r.subject || '(no subject)'}\"\\n   From: ${r.sender_email || 'unknown'} (${r.sender_domain || '?'})\\n   AI Guess: ${r.ai_guess_company || 'unknown'} | Confidence: ${confidence}\\n   Doc Type: ${r.doc_type || 'unknown'} | Queued: ${date}\\n   Message ID: ${r.message_id}`;\n  }).join('\\n\\n');\n  const result = `## Attribution Queue \u2014 ${realRows.length} Pending Item(s)\\n\\n${items}\\n\\nTo confirm, tell me which deal each belongs to.`;\n  return [{ json: { result } }];\n}\n\nif (queryType === 'pending_drafts') {\n  const realRows = rows.filter(r => r.id != null);\n  if (realRows.length === 0) return [{ json: { result: 'No pending drafts.' } }];\n  const now = new Date();\n  const items = realRows.map((r, i) => {\n    const sentAt = r.sent_at ? new Date(r.sent_at) : null;\n    const hoursAgo = sentAt ? Math.round((now - sentAt) / 3600000) : '?';\n    let entry = `### Draft ${i + 1} \u2014 ${r.output_type} | ID: ${r.id} | ${r.company_name} | ~${hoursAgo}h ago`;\n    if (r.subject) entry += `\\n**Subject:** ${r.subject}`;\n    if (r.recipient_name) entry += `\\n**To:** ${r.recipient_name} <${r.recipient_email || ''}>`;\n    if (r.full_content) entry += `\\n\\n${r.full_content}`;\n    return entry;\n  });\n  const result = `PENDING_DRAFTS_COUNT:${realRows.length}\\n\\n${items.join('\\n\\n---\\n\\n')}`;\n  return [{ json: { result, pending_draft_count: realRows.length } }];\n}\n\nconst r = rows[0];\nconst result = `Attribution updated: message_id ${r.message_id} resolved as ${r.resolution}, assigned to: ${r.resolved_deal_id || 'none'}.`;\nreturn [{ json: { result } }];\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Code: Route Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code: Route Query": {
+        "main": [
+          [
+            {
+              "node": "Postgres: Execute Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: Execute Query": {
+        "main": [
+          [
+            {
+              "node": "Code: Format Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Randall raustinholland@gmail.com",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-05T05:54:57.623Z",
+        "id": 678,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "deactivated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-05T05:54:57.628Z",
+        "id": 679,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "activated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-02T07:41:45.097Z",
+        "id": 562,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "deactivated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-02T07:41:45.111Z",
+        "id": 563,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "activated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-03T07:19:32.120Z",
+        "id": 633,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "deactivated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      },
+      {
+        "createdAt": "2026-03-03T07:19:32.127Z",
+        "id": 634,
+        "workflowId": "lLBrmwzHelkLW82x",
+        "versionId": "4009e884-f26b-402d-aa97-ddb7e7752d08",
+        "event": "activated",
+        "userId": "8a968d0b-280d-4856-b867-bed874846716"
+      }
+    ]
+  }
+}

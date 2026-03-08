@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mandala Stacked View — Deal History as Depth</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0f0f1a;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .page-title {
+    text-align: center;
+    padding: 32px 20px 8px;
+    font-size: 28px;
+    font-weight: 300;
+    letter-spacing: 2px;
+    color: #a5b4fc;
+  }
+
+  .page-subtitle {
+    text-align: center;
+    font-size: 14px;
+    color: #64748b;
+    margin-bottom: 24px;
+    letter-spacing: 1px;
+  }
+
+  .main-layout {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    padding: 0 32px 48px;
+    flex-wrap: wrap;
+  }
+
+  /* --- Composited View --- */
+  .composited-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .section-label {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #6366f1;
+    margin-bottom: 12px;
+  }
+
+  .canvas-wrap {
+    position: relative;
+    width: 500px;
+    height: 500px;
+  }
+
+  .canvas-wrap canvas {
+    border-radius: 12px;
+  }
+
+  /* Outer glow on composited canvas */
+  .canvas-wrap.glow {
+    filter: drop-shadow(0 0 30px rgba(99, 102, 241, 0.25))
+            drop-shadow(0 0 60px rgba(99, 102, 241, 0.1));
+  }
+
+  .description {
+    max-width: 460px;
+    margin-top: 16px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #64748b;
+    text-align: center;
+  }
+
+  /* --- Interactive View --- */
+  .interactive-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 16px;
+    width: 460px;
+  }
+
+  .controls input[type="range"] {
+    flex: 1;
+    accent-color: #6366f1;
+    height: 6px;
+  }
+
+  .play-btn {
+    background: #6366f1;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 20px;
+    font-size: 13px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: background 0.2s;
+  }
+
+  .play-btn:hover { background: #4f46e5; }
+
+  .layer-label {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-top: 8px;
+    text-align: center;
+    min-height: 20px;
+  }
+
+  /* --- Side Panel --- */
+  .side-panel {
+    width: 240px;
+    padding-top: 28px;
+  }
+
+  .side-panel h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #6366f1;
+    margin-bottom: 12px;
+  }
+
+  .run-list {
+    list-style: none;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #94a3b8;
+  }
+
+  .run-list li {
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .run-list li.active {
+    background: rgba(99, 102, 241, 0.15);
+    color: #e2e8f0;
+  }
+
+  .run-list li .score {
+    float: right;
+    font-weight: 600;
+  }
+
+  .legend {
+    margin-top: 24px;
+    font-size: 11px;
+    color: #475569;
+    line-height: 2;
+  }
+
+  .legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-title">Mandala Stacked View</div>
+<div class="page-subtitle">Deal History as Depth</div>
+
+<div class="main-layout">
+
+  <!-- Composited (all layers) -->
+  <div class="composited-section">
+    <div class="section-label">All Layers Composited</div>
+    <div class="canvas-wrap glow">
+      <canvas id="compositedCanvas" width="500" height="500"></canvas>
+    </div>
+    <p class="description">
+      Each scoring run is rendered as a complete mandala at low opacity, layered from center outward.
+      Deep color = consistency. Muddy overlap = volatility. The blooming shape traces growth over time.
+    </p>
+  </div>
+
+  <!-- Interactive slider -->
+  <div class="interactive-section">
+    <div class="section-label">Interactive Timeline</div>
+    <div class="canvas-wrap">
+      <canvas id="interactiveCanvas" width="500" height="500"></canvas>
+    </div>
+    <div class="controls">
+      <button class="play-btn" id="playBtn">Play</button>
+      <input type="range" id="layerSlider" min="1" max="10" value="1" step="1">
+    </div>
+    <div class="layer-label" id="layerLabel">Layer 1 / 10</div>
+  </div>
+
+  <!-- Side Panel -->
+  <div class="side-panel">
+    <h3>Scoring Runs</h3>
+    <ul class="run-list" id="runList"></ul>
+
+    <div class="legend">
+      <div><span class="legend-dot" style="background:#b91c1c"></span> Score 0-1 (Critical)</div>
+      <div><span class="legend-dot" style="background:#f59e0b"></span> Score 2 (Weak)</div>
+      <div><span class="legend-dot" style="background:#eab308"></span> Score 3 (Developing)</div>
+      <div><span class="legend-dot" style="background:#22c55e"></span> Score 4 (Strong)</div>
+      <div><span class="legend-dot" style="background:#15803d"></span> Score 5 (Proven)</div>
+      <div style="margin-top:8px"><span class="legend-dot" style="background:#cbd5e1"></span> Discover</div>
+      <div><span class="legend-dot" style="background:#a5b4fc"></span> Qualify</div>
+      <div><span class="legend-dot" style="background:#6366f1"></span> Prove</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// SAMPLE DATA
+// ============================================================
+const SAMPLE_DEAL = {
+  company_name: 'Acme Health',
+  scoring_runs: [
+    { scored_at:'2026-01-15', stage:'discover', pain:1, power:1, vision:2, value:1, change:1, control:1, total:7, pe_sponsor:0, activity:1, stakeholders:[] },
+    { scored_at:'2026-01-22', stage:'discover', pain:2, power:1, vision:2, value:2, change:1, control:1, total:9, pe_sponsor:0, activity:5, stakeholders:[{role:'PC',confirmed:false,position:'champion'}] },
+    { scored_at:'2026-01-29', stage:'qualify', pain:2, power:2, vision:3, value:2, change:2, control:2, total:13, pe_sponsor:1, activity:6, stakeholders:[{role:'PC',confirmed:false,position:'champion'}] },
+    { scored_at:'2026-02-05', stage:'qualify', pain:3, power:2, vision:3, value:2, change:2, control:2, total:14, pe_sponsor:1, activity:3, stakeholders:[{role:'PC',confirmed:false,position:'champion'},{role:'PES',confirmed:false,position:'es'}] },
+    { scored_at:'2026-02-12', stage:'qualify', pain:3, power:2, vision:3, value:3, change:2, control:2, total:15, pe_sponsor:2, activity:2, stakeholders:[{role:'PC',confirmed:false,position:'champion'},{role:'PES',confirmed:false,position:'es'}] },
+    { scored_at:'2026-02-19', stage:'qualify', pain:2, power:1, vision:2, value:2, change:1, control:2, total:10, pe_sponsor:1, activity:1, stakeholders:[{role:'PC',confirmed:false,position:'champion'},{role:'PES',confirmed:false,position:'es'}] },
+    { scored_at:'2026-02-26', stage:'prove', pain:3, power:2, vision:3, value:3, change:2, control:3, total:16, pe_sponsor:2, activity:4, stakeholders:[{role:'C',confirmed:true,position:'champion'},{role:'PES',confirmed:false,position:'es'}] },
+    { scored_at:'2026-03-05', stage:'prove', pain:4, power:2, vision:4, value:3, change:3, control:3, total:19, pe_sponsor:3, activity:7, stakeholders:[{role:'C',confirmed:true,position:'champion'},{role:'PES',confirmed:false,position:'es'},{role:'UDM',confirmed:false,position:'dm'}] },
+    { scored_at:'2026-03-12', stage:'prove', pain:4, power:2, vision:4, value:4, change:3, control:3, total:20, pe_sponsor:4, activity:5, stakeholders:[{role:'C',confirmed:true,position:'champion'},{role:'ES',confirmed:true,position:'es'},{role:'UDM',confirmed:false,position:'dm'}] },
+    { scored_at:'2026-03-19', stage:'prove', pain:5, power:2, vision:5, value:4, change:3, control:3, total:22, pe_sponsor:4, activity:6, stakeholders:[{role:'C',confirmed:true,position:'champion'},{role:'ES',confirmed:true,position:'es'},{role:'UDM',confirmed:false,position:'dm'}] }
+  ]
+};
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const CX = 250, CY = 250;            // Canvas center
+const MIN_RADIUS = 30;               // Innermost mandala ring
+const MAX_RADIUS = 220;              // Outermost mandala ring
+const CENTER_RADIUS = 24;            // Center stage circle
+const TOTAL_RUNS = SAMPLE_DEAL.scoring_runs.length;
+const LAYER_ALPHA = 0.18;
+
+// Dimension names, short labels, and angular positions (starting at -90 deg = 12 o'clock)
+const DIMS = [
+  { key: 'pain',    label: 'P',  angle: -Math.PI / 2 },
+  { key: 'power',   label: 'Pw', angle: -Math.PI / 2 + Math.PI / 3 },
+  { key: 'vision',  label: 'V',  angle: -Math.PI / 2 + 2 * Math.PI / 3 },
+  { key: 'value',   label: 'Va', angle: -Math.PI / 2 + Math.PI },
+  { key: 'change',  label: 'Ch', angle: -Math.PI / 2 + 4 * Math.PI / 3 },
+  { key: 'control', label: 'Co', angle: -Math.PI / 2 + 5 * Math.PI / 3 }
+];
+
+// Score -> color mapping
+function scoreColor(s) {
+  if (s <= 1) return '#b91c1c';
+  if (s === 2) return '#f59e0b';
+  if (s === 3) return '#eab308';
+  if (s === 4) return '#22c55e';
+  return '#15803d';
+}
+
+// Stage -> center circle color
+function stageColor(stage) {
+  if (stage === 'discover')  return '#cbd5e1';
+  if (stage === 'qualify')   return '#a5b4fc';
+  if (stage === 'prove')     return '#6366f1';
+  if (stage === 'negotiate') return '#a855f7';
+  if (stage === 'close')     return '#22d3ee';
+  return '#cbd5e1';
+}
+
+// Stakeholder position -> angle offset (from top)
+const STAKEHOLDER_ANGLES = {
+  champion: 30 * Math.PI / 180 - Math.PI / 2,
+  es:       90 * Math.PI / 180 - Math.PI / 2,
+  dm:      210 * Math.PI / 180 - Math.PI / 2
+};
+
+// ============================================================
+// DRAWING HELPERS
+// ============================================================
+
+/**
+ * Compute the outer radius for a given run index (0-based).
+ */
+function runRadius(runIndex) {
+  return MIN_RADIUS + (MAX_RADIUS - MIN_RADIUS) * ((runIndex + 1) / TOTAL_RUNS);
+}
+
+/**
+ * Draw a single mandala layer for the given scoring run.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} run - scoring run data
+ * @param {number} runIndex - 0-based index
+ * @param {number} alpha - global alpha for this layer
+ * @param {boolean} drawLabel - whether to draw the total score in center
+ * @param {boolean} applyBlur - whether to blur early layers
+ */
+function drawMandalaLayer(ctx, run, runIndex, alpha, drawLabel, applyBlur) {
+  const outerR = runRadius(runIndex);
+  // Sector angular half-width: proportional to score (max 5), mapped to 0-28 degrees
+  const maxHalfAngle = 28 * Math.PI / 180;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Optional depth-of-field blur for early layers
+  if (applyBlur && runIndex < TOTAL_RUNS - 2) {
+    const blurAmount = Math.max(0, (TOTAL_RUNS - 2 - runIndex) * 0.4);
+    if (blurAmount > 0) {
+      ctx.filter = `blur(${blurAmount.toFixed(1)}px)`;
+    }
+  }
+
+  // --- Draw 6 radial arm sectors ---
+  for (const dim of DIMS) {
+    const score = run[dim.key];
+    const halfAngle = maxHalfAngle * (score / 5);
+    const color = scoreColor(score);
+
+    ctx.beginPath();
+    ctx.moveTo(CX, CY);
+    ctx.arc(CX, CY, outerR, dim.angle - halfAngle, dim.angle + halfAngle);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Thin bright edge on each sector
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // --- Center circle (stage color) ---
+  ctx.beginPath();
+  ctx.arc(CX, CY, CENTER_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = stageColor(run.stage);
+  ctx.fill();
+
+  // Reset filter before drawing stakeholder dots (keep them sharp)
+  ctx.filter = 'none';
+
+  // --- Stakeholder dots ---
+  for (const sh of run.stakeholders) {
+    const angle = STAKEHOLDER_ANGLES[sh.position];
+    if (angle === undefined) continue;
+    const dotR = MIN_RADIUS + (outerR - MIN_RADIUS) * 0.85;
+    const dx = CX + dotR * Math.cos(angle);
+    const dy = CY + dotR * Math.sin(angle);
+    const dotSize = 4;
+
+    ctx.beginPath();
+    ctx.arc(dx, dy, dotSize, 0, Math.PI * 2);
+
+    if (sh.confirmed) {
+      ctx.fillStyle = '#22c55e';
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+
+  // Draw total score label only for the specified layer (no alpha reduction)
+  if (drawLabel) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(run.total, CX, CY);
+    ctx.restore();
+  }
+}
+
+/**
+ * Draw arm labels at the outermost extent.
+ */
+function drawArmLabels(ctx) {
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '11px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const labelR = MAX_RADIUS + 16;
+  for (const dim of DIMS) {
+    const lx = CX + labelR * Math.cos(dim.angle);
+    const ly = CY + labelR * Math.sin(dim.angle);
+    ctx.fillText(dim.label, lx, ly);
+  }
+  ctx.restore();
+}
+
+/**
+ * Draw faint concentric ring guides.
+ */
+function drawRingGuides(ctx, upToRun) {
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < upToRun; i++) {
+    ctx.beginPath();
+    ctx.arc(CX, CY, runRadius(i), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ============================================================
+// COMPOSITED VIEW (all layers at once)
+// ============================================================
+function renderComposited() {
+  const canvas = document.getElementById('compositedCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 500, 500);
+
+  drawRingGuides(ctx, TOTAL_RUNS);
+
+  // Draw each layer with depth blur + alpha
+  for (let i = 0; i < TOTAL_RUNS; i++) {
+    const isLast = i === TOTAL_RUNS - 1;
+    drawMandalaLayer(ctx, SAMPLE_DEAL.scoring_runs[i], i, LAYER_ALPHA, isLast, true);
+  }
+
+  drawArmLabels(ctx);
+}
+
+// ============================================================
+// INTERACTIVE SLIDER VIEW
+// ============================================================
+let currentVisibleLayers = 1;
+let layerOpacities = new Array(TOTAL_RUNS).fill(0); // for fade-in animation
+let animFrameId = null;
+let isPlaying = false;
+let playIntervalId = null;
+
+function renderInteractive() {
+  const canvas = document.getElementById('interactiveCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 500, 500);
+
+  drawRingGuides(ctx, currentVisibleLayers);
+
+  for (let i = 0; i < currentVisibleLayers; i++) {
+    const isLast = i === currentVisibleLayers - 1;
+    const alpha = LAYER_ALPHA * layerOpacities[i];
+    if (alpha > 0.001) {
+      drawMandalaLayer(ctx, SAMPLE_DEAL.scoring_runs[i], i, alpha, isLast, true);
+    }
+  }
+
+  drawArmLabels(ctx);
+}
+
+/**
+ * Animate opacity fade-in for all visible layers to their target.
+ */
+function animateOpacities() {
+  let needsFrame = false;
+
+  for (let i = 0; i < TOTAL_RUNS; i++) {
+    const target = i < currentVisibleLayers ? 1 : 0;
+    if (Math.abs(layerOpacities[i] - target) > 0.01) {
+      layerOpacities[i] += (target - layerOpacities[i]) * 0.12; // ease toward target
+      needsFrame = true;
+    } else {
+      layerOpacities[i] = target;
+    }
+  }
+
+  renderInteractive();
+
+  if (needsFrame) {
+    animFrameId = requestAnimationFrame(animateOpacities);
+  }
+}
+
+function setVisibleLayers(n) {
+  currentVisibleLayers = n;
+  // Kick animation
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+  animFrameId = requestAnimationFrame(animateOpacities);
+  updateLabel();
+  updateRunList();
+}
+
+function updateLabel() {
+  const run = SAMPLE_DEAL.scoring_runs[currentVisibleLayers - 1];
+  document.getElementById('layerLabel').textContent =
+    `Layer ${currentVisibleLayers} / ${TOTAL_RUNS}  |  ${run.scored_at}  |  Total: ${run.total}/30  |  ${run.stage}`;
+}
+
+// ============================================================
+// SIDE PANEL
+// ============================================================
+function buildRunList() {
+  const ul = document.getElementById('runList');
+  ul.innerHTML = '';
+  for (let i = 0; i < TOTAL_RUNS; i++) {
+    const run = SAMPLE_DEAL.scoring_runs[i];
+    const li = document.createElement('li');
+    li.textContent = `${run.scored_at}`;
+    const span = document.createElement('span');
+    span.className = 'score';
+    span.textContent = `${run.total}/30`;
+    li.appendChild(span);
+    ul.appendChild(li);
+  }
+}
+
+function updateRunList() {
+  const items = document.querySelectorAll('#runList li');
+  items.forEach((li, i) => {
+    li.classList.toggle('active', i < currentVisibleLayers);
+  });
+}
+
+// ============================================================
+// CONTROLS
+// ============================================================
+const slider = document.getElementById('layerSlider');
+const playBtn = document.getElementById('playBtn');
+
+slider.addEventListener('input', () => {
+  setVisibleLayers(parseInt(slider.value, 10));
+});
+
+playBtn.addEventListener('click', () => {
+  if (isPlaying) {
+    clearInterval(playIntervalId);
+    isPlaying = false;
+    playBtn.textContent = 'Play';
+  } else {
+    // Reset to 1 if at end
+    if (currentVisibleLayers >= TOTAL_RUNS) {
+      currentVisibleLayers = 0;
+      layerOpacities.fill(0);
+      slider.value = 1;
+    }
+    isPlaying = true;
+    playBtn.textContent = 'Pause';
+    playIntervalId = setInterval(() => {
+      if (currentVisibleLayers >= TOTAL_RUNS) {
+        clearInterval(playIntervalId);
+        isPlaying = false;
+        playBtn.textContent = 'Play';
+        return;
+      }
+      currentVisibleLayers++;
+      slider.value = currentVisibleLayers;
+      setVisibleLayers(currentVisibleLayers);
+    }, 1000);
+  }
+});
+
+// ============================================================
+// INIT
+// ============================================================
+buildRunList();
+renderComposited();
+setVisibleLayers(1);
+</script>
+</body>
+</html>

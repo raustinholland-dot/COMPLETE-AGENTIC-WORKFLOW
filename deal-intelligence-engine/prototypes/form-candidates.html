@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deal Lifecycle Visualization - Form Candidates</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a2e;
+      color: #e2e8f0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 32px 24px 64px;
+      min-width: 1060px;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 28px;
+      font-weight: 700;
+      color: #f1f5f9;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 15px;
+      color: #94a3b8;
+      margin-bottom: 36px;
+      font-weight: 400;
+    }
+
+    .row-header {
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #818cf8;
+      margin: 24px 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #2d2d4a;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      max-width: 1080px;
+      margin: 0 auto 8px;
+    }
+
+    .cell {
+      background: #16162a;
+      border: 1px solid #2d2d4a;
+      border-radius: 12px;
+      padding: 12px 8px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 280px;
+    }
+
+    .cell-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a5b4fc;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .cell iframe {
+      border: none;
+      width: 240px;
+      height: 260px;
+      background: transparent;
+    }
+
+    .descriptions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      max-width: 1080px;
+      margin: 0 auto 48px;
+    }
+
+    .desc-card {
+      background: #12122280;
+      border: 1px solid #2d2d4a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+
+    .desc-card strong {
+      color: #c7d2fe;
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .questions {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #16162a;
+      border: 1px solid #2d2d4a;
+      border-radius: 12px;
+      padding: 28px 32px;
+    }
+
+    .questions h2 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 16px;
+    }
+
+    .questions ol {
+      padding-left: 20px;
+    }
+
+    .questions li {
+      font-size: 14px;
+      line-height: 1.7;
+      color: #cbd5e1;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Deal Lifecycle Visualization &mdash; Form Candidates</h1>
+  <p class="subtitle">Same deal data, 4 different visual forms. Which ideal form resonates?</p>
+
+  <!-- Row 1: IDEAL -->
+  <div class="row-header">Ideal Form (Perfect Deal &mdash; All 5s)</div>
+  <div class="grid">
+    <div class="cell">
+      <div class="cell-label">Flower</div>
+      <iframe id="frame-flower-ideal" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Gem</div>
+      <iframe id="frame-gem-ideal" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Tree Ring</div>
+      <iframe id="frame-treering-ideal" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Mandala</div>
+      <iframe id="frame-mandala-ideal" srcdoc=""></iframe>
+    </div>
+  </div>
+
+  <!-- Row 2: REAL DEAL -->
+  <div class="row-header">Real Deal (Sample: Acme Health &mdash; Improving but Power lagging)</div>
+  <div class="grid">
+    <div class="cell">
+      <div class="cell-label">Flower</div>
+      <iframe id="frame-flower-real" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Gem</div>
+      <iframe id="frame-gem-real" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Tree Ring</div>
+      <iframe id="frame-treering-real" srcdoc=""></iframe>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Mandala</div>
+      <iframe id="frame-mandala-real" srcdoc=""></iframe>
+    </div>
+  </div>
+
+  <!-- Descriptions -->
+  <div class="descriptions">
+    <div class="desc-card">
+      <strong>Flower</strong>
+      Ideal: Full symmetric bloom, all 6 petals equal length, deep green.
+      Deviation: Short or red petals show lagging dimensions. A wilted petal is immediately visceral &mdash; you feel something dying.
+    </div>
+    <div class="desc-card">
+      <strong>Gem</strong>
+      Ideal: Flawless hexagonal brilliant-cut stone, symmetric facets, bright sparkle.
+      Deviation: Collapsed facets make the gem look chipped or dull. Low-score facets darken toward near-black &mdash; like a flawed stone.
+    </div>
+    <div class="desc-card">
+      <strong>Tree Ring</strong>
+      Ideal: Even concentric rings of warm heartwood, thick and uniform.
+      Deviation: Thin dark rings show stress periods. Color variation across sectors reveals dimensional imbalance &mdash; like drought scarring in real wood.
+    </div>
+    <div class="desc-card">
+      <strong>Mandala</strong>
+      Ideal: Perfect 6-fold radial symmetry, all arms equal, deep green.
+      Deviation: Stunted arms break the symmetry. The mandala's geometric precision makes even small imbalances feel wrong &mdash; your eye catches asymmetry instantly.
+    </div>
+  </div>
+
+  <!-- Key Questions -->
+  <div class="questions">
+    <h2>Key Questions</h2>
+    <ol>
+      <li>Which form gives you the strongest "I can immediately tell what's going on" feeling?</li>
+      <li>Which ideal form is most instantly recognizable?</li>
+      <li>Which deviations feel most visceral &mdash; where do you <em>feel</em> that something is off?</li>
+      <li>Does any form spark a new idea or hybrid?</li>
+    </ol>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Shared sample data (defined once, used by all renderers)
+    // -----------------------------------------------------------------------
+    const SAMPLE_RUNS = [
+      { scored_at:'2026-01-15', pain:1, power:1, vision:2, value:1, change:1, control:1, total:7,  stage:'discover', activity:5 },
+      { scored_at:'2026-01-22', pain:2, power:1, vision:2, value:2, change:1, control:1, total:9,  stage:'discover', activity:4 },
+      { scored_at:'2026-01-29', pain:2, power:2, vision:3, value:2, change:2, control:2, total:13, stage:'qualify',  activity:6 },
+      { scored_at:'2026-02-05', pain:3, power:2, vision:3, value:2, change:2, control:2, total:14, stage:'qualify',  activity:3 },
+      { scored_at:'2026-02-12', pain:3, power:2, vision:3, value:3, change:2, control:2, total:15, stage:'qualify',  activity:2 },
+      { scored_at:'2026-02-19', pain:2, power:1, vision:2, value:2, change:1, control:2, total:10, stage:'qualify',  activity:1 },
+      { scored_at:'2026-02-26', pain:3, power:2, vision:3, value:3, change:2, control:3, total:16, stage:'prove',   activity:4 },
+      { scored_at:'2026-03-05', pain:4, power:2, vision:4, value:3, change:3, control:3, total:19, stage:'prove',   activity:7 },
+      { scored_at:'2026-03-12', pain:4, power:2, vision:4, value:4, change:3, control:3, total:20, stage:'prove',   activity:5 },
+      { scored_at:'2026-03-19', pain:5, power:2, vision:5, value:4, change:3, control:3, total:22, stage:'prove',   activity:6 },
+    ];
+
+    // -----------------------------------------------------------------------
+    // Because flower.js, treering.js, and mandala.js all declare top-level
+    // `const SAMPLE_RUNS` (and treering/mandala share `DIMS`, `DIM_LABELS`,
+    // `svgEl`, `makeIdealRuns`), loading them as sibling <script> tags in
+    // the same page would cause redeclaration errors.
+    //
+    // Solution: each visualization renders inside its own <iframe>, giving
+    // each JS file an isolated execution context. We fetch the JS source
+    // and inject it into a minimal HTML document inside each iframe.
+    // -----------------------------------------------------------------------
+
+    const VIZ_CONFIG = [
+      { file: 'flower.js',   renderCall: 'renderFlower', idPrefix: 'flower'   },
+      { file: 'gem.js',      renderCall: 'renderGem',    idPrefix: 'gem'      },
+      { file: 'treering.js', renderCall: 'renderTreeRing', idPrefix: 'treering' },
+      { file: 'mandala.js',  renderCall: 'renderMandala',  idPrefix: 'mandala'  },
+    ];
+
+    const runsJSON = JSON.stringify(SAMPLE_RUNS);
+
+    /**
+     * Build an iframe srcdoc HTML string that:
+     * 1. Loads the JS file inline
+     * 2. Calls the render function with the correct container + options
+     */
+    function buildSrcdoc(jsSource, renderCall, isIdeal) {
+      const containerId = 'viz';
+      // For treering and mandala, the auto-render DOMContentLoaded listeners
+      // look for specific IDs. We use a different ID ('viz') so they don't
+      // fire, and we call the render function ourselves.
+      return `<!DOCTYPE html>
+<html><head><style>
+  html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
+  #viz { display:flex; justify-content:center; align-items:center; width:240px; height:260px; }
+</style></head><body>
+<div id="viz"></div>
+<script>
+${jsSource}
+<\/script>
+<script>
+  var runs = ${runsJSON};
+  ${renderCall}('viz', runs, { ideal: ${isIdeal}, size: 220, label: '' });
+<\/script>
+</body></html>`;
+    }
+
+    // Fetch all JS files and populate iframes
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Fetch all JS sources in parallel
+      const sources = await Promise.all(
+        VIZ_CONFIG.map(cfg => fetch(cfg.file).then(r => r.text()))
+      );
+
+      VIZ_CONFIG.forEach((cfg, i) => {
+        const jsSource = sources[i];
+
+        // Ideal iframe
+        const idealFrame = document.getElementById(`frame-${cfg.idPrefix}-ideal`);
+        if (idealFrame) {
+          idealFrame.srcdoc = buildSrcdoc(jsSource, cfg.renderCall, true);
+        }
+
+        // Real iframe
+        const realFrame = document.getElementById(`frame-${cfg.idPrefix}-real`);
+        if (realFrame) {
+          realFrame.srcdoc = buildSrcdoc(jsSource, cfg.renderCall, false);
+        }
+      });
+    });
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,621 @@
+{
+    "updatedAt": "2026-03-08T20:49:29.666Z",
+    "createdAt": "2026-02-28T07:30:25.839Z",
+    "id": "XDTSkxxWtZUBDECT",
+    "name": "CW-07: Tool \u2014 Database Query (Webhook)",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "chat-pg-query",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "cw04b-0001-0000-0000-000000000001",
+            "name": "Webhook: PG Query",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "webhookId": "cw04b-0001-0000-0000-000000000001",
+            "position": [
+                240,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "function sq(v) {\n  return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\n// Route the incoming query type to a parameter set for the Postgres node\nconst body = $input.first().json.body || {};\nconst queryType = body.query_type || 'deal_health_all';\nconst dealId = body.deal_id || null;\n\n// Special route: chunks_by_message_id goes to Qdrant, not Postgres\nif (queryType === 'chunks_by_message_id') {\n  const messageId = body.message_id;\n  if (!messageId) throw new Error('chunks_by_message_id requires message_id');\n  return [{ json: { query_type: queryType, is_qdrant: true, message_id: messageId, source_file: body.source_file || '', deal_id: body.deal_id || '' } }];\n}\n\n// Build SQL based on query_type\nlet sql;\n\nswitch (queryType) {\n  case 'deal_health_single':\n    if (!dealId) throw new Error('deal_health_single requires deal_id');\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_opp_name, d.salesforce_opp_id, d.salesforce_account_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.deal_owner,\n             d.is_active, d.updated_at,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.champion_title,\n             dh.executive_sponsor_name, dh.executive_sponsor_title,\n             dh.pe_sponsor_score, dh.pe_sponsor_justification,\n             dh.dap_exists, dh.dap_agreed, dh.dap_status,\n             dh.dap_milestones_complete, dh.dap_has_14_day_gap,\n             dh.dap_next_milestone, dh.dap_next_milestone_date, dh.dap_summary,\n             dh.current_state_org, dh.current_state_activities, dh.current_state_technology,\n             dh.future_state_org, dh.future_state_activities, dh.future_state_technology,\n             dh.key_stakeholder_success_criteria, dh.risks,\n             dh.next_step, dh.next_step_date,\n             dh.call_summary, dh.highlights,\n             dh.action_items_prospect, dh.action_items_internal, dh.internal_actions,\n             dh.services_narrative, dh.general_narrative, dh.internal_team_update,\n             dh.trend_direction, dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.deal_id = '${dealId}'\n           LIMIT 1`;\n    break;\n\n  case 'deal_health_all':\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_opp_name, d.salesforce_opp_id, d.salesforce_account_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.is_active,\n             COALESCE(d.status, 'active') AS status,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.executive_sponsor_name,\n             dh.next_step, dh.next_step_date, dh.trend_direction,\n             dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           ORDER BY dh.p2v2c2_total DESC NULLS LAST`;\n    break;\n\n  case 'attribution_queue':\n    sql = `SELECT id, sender_email, sender_domain, subject, email_date,\n             ai_guess_deal_id, ai_guess_company, ai_confidence, doc_type, queued_at\n           FROM attribution_queue\n           WHERE resolution = 'pending'\n           ORDER BY queued_at ASC\n           LIMIT 20`;\n    break;\n\n  case 'outputs_log':\n    if (!dealId) throw new Error('outputs_log requires deal_id');\n    sql = `SELECT output_type, recipient_email, recipient_name, subject,\n             content_summary, sent_at, triggered_by\n           FROM outputs_log\n           WHERE deal_id = '${dealId}'\n           ORDER BY sent_at DESC\n           LIMIT 20`;\n    break;\n\n  case 'ingestion_log':\n    sql = `SELECT\n  il.id, il.message_id, il.deal_id, il.subject, il.sender_email,\n  il.sender_domain, il.doc_type, il.attachment_count, il.chunk_count,\n  il.attribution_confidence, il.attribution_status, il.ingested_at,\n  il.qdrant_namespace,\n  il.classification_reasoning,\n  il.classification_feedback,\n  il.doc_type_override,\n  il.deal_id_override,\n  il.feedback_status,\n  il.feedback_at,\n  d.company_name,\n  d.status as deal_status\nFROM ingestion_log il\nLEFT JOIN deals d ON d.deal_id = il.deal_id\nORDER BY il.ingested_at DESC\nLIMIT 500`;\n    break;\n\n  case 'pipeline_summary':\n    sql = `SELECT d.deal_stage, d.forecast_category,\n             COUNT(*) AS deal_count,\n             SUM(d.deal_value_usd) AS total_value,\n             ROUND(AVG(dh.p2v2c2_total), 1) AS avg_p2v2c2,\n             COUNT(CASE WHEN dh.trend_direction = 'declining' THEN 1 END) AS declining_deals\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           GROUP BY d.deal_stage, d.forecast_category\n           ORDER BY d.deal_stage`;\n    break;\n\n  case 'confirm_attribution':\n    const msgId = body.message_id || null;\n    const resolvedDealId = body.resolved_deal_id || null;\n    const resolution = body.resolution || 'confirmed';\n    if (!msgId) throw new Error('confirm_attribution requires message_id');\n    sql = `UPDATE attribution_queue\n           SET resolution = '${resolution}',\n               resolved_deal_id = ${resolvedDealId ? `'${resolvedDealId}'` : 'NULL'},\n               resolved_at = NOW()\n           WHERE message_id = '${msgId}'\n           RETURNING id, message_id, resolution, resolved_deal_id`;\n    break;\n\n  case 'error_status':\n    sql = `SELECT COUNT(*) as cnt, COALESCE(MAX(severity), 'none') as max_sev FROM workflow_errors WHERE acknowledged = FALSE`;\n    break;\n\n\n  case 'scoring_history':\n    if (!dealId) throw new Error('scoring_history requires deal_id');\n    sql = `SELECT scored_at, trigger_type,\n             pain_score, power_score, vision_score, value_score, change_score, control_score,\n             critical_activity_stage, general_narrative, call_summary,\n             pain_justification, power_justification, vision_justification,\n             value_justification, change_justification, control_justification,\n             trigger_message_id\n           FROM deal_health\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY scored_at DESC\n           LIMIT 50`;\n    break;\n\n  case 'activity_timeline':\n    if (!dealId) throw new Error('activity_timeline requires deal_id');\n    sql = `SELECT\n             'notification' AS event_type,\n             created_at AS event_time,\n             notification_type AS sub_type,\n             summary,\n             context::text AS context,\n             NULL AS message_id\n           FROM deal_notifications\n           WHERE deal_id = ${sq(dealId)}\n           UNION ALL\n           SELECT\n             'ingestion' AS event_type,\n             ingested_at AS event_time,\n             doc_type AS sub_type,\n             COALESCE(subject, doc_type) AS summary,\n             json_build_object('sender', sender_email, 'chunks', chunk_count, 'attribution', attribution_status)::text AS context,\n             message_id\n           FROM ingestion_log\n           WHERE deal_id = ${sq(dealId)}\n           UNION ALL\n           SELECT\n             CASE\n               WHEN status = 'dismissed' THEN 'draft_dismissed'\n               WHEN status = 'approved' THEN 'draft_approved'\n               WHEN status = 'sent' THEN 'output'\n               ELSE 'output'\n             END AS event_type,\n             sent_at AS event_time,\n             output_type AS sub_type,\n             COALESCE(subject, output_type) AS summary,\n             json_build_object('recipient', recipient_email, 'status', status, 'dismiss_reason', dismiss_reason)::text AS context,\n             NULL AS message_id\n           FROM outputs_log\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY event_time DESC\n           LIMIT 100`;\n    break;\n\n  case 'deal_documents':\n    if (!dealId) throw new Error('deal_documents requires deal_id');\n    sql = `SELECT message_id, deal_id, doc_type, subject, sender_email, sender_domain,\n             chunk_count, ingested_at, attribution_status, classification_reasoning\n           FROM ingestion_log\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY ingested_at DESC\n           LIMIT 100`;\n    break;\n\n  case 'reassign_document': {\n    const messageId = body.message_id;\n    const fromDealId = body.from_deal_id;\n    const toDealId = body.to_deal_id;\n    if (!messageId || !toDealId) throw new Error('reassign_document requires message_id and to_deal_id');\n    sql = `UPDATE ingestion_log SET deal_id = ${sq(toDealId)}, attribution_status = 'reassigned'\n           WHERE message_id = ${sq(messageId)}\n           RETURNING id, message_id, deal_id`;\n    break;\n  }\n\n  case 'remove_document': {\n    const msgId2 = body.message_id;\n    const removeDealId = body.deal_id;\n    if (!msgId2) throw new Error('remove_document requires message_id');\n    sql = `UPDATE ingestion_log SET deal_id = NULL, attribution_status = 'removed'\n           WHERE message_id = ${sq(msgId2)}\n           RETURNING id, message_id, deal_id`;\n    break;\n  }\n\n  case 'revert_score': {\n    const triggerMsgId = body.trigger_message_id;\n    if (!triggerMsgId) throw new Error('revert_score requires trigger_message_id');\n    sql = `DELETE FROM deal_health WHERE trigger_message_id = ${sq(triggerMsgId)} RETURNING id, deal_id, scored_at`;\n    break;\n  }\n\n  case 'update_deal_status': {\n    const targetDealId = body.deal_id;\n    const newStatus = body.status;\n    if (!targetDealId || !newStatus) throw new Error('update_deal_status requires deal_id and status');\n    if (!['active','internal','archived'].includes(newStatus)) throw new Error('Invalid status value');\n    const isActive = newStatus === 'active' ? 'true' : 'false';\n    sql = `UPDATE deals SET status = ${sq(newStatus)}, is_active = ${isActive}, updated_at = NOW()\n           WHERE deal_id = ${sq(targetDealId)}\n           RETURNING deal_id, status, is_active`;\n    break;\n  }\n\n  case 'ingestion_feedback': {\n    if (!body.message_id) throw new Error('ingestion_feedback requires message_id');\n    sql = `UPDATE ingestion_log\n           SET feedback_status = ${sq(body.feedback_status)},\n               classification_feedback = ${sq(body.classification_feedback)},\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, feedback_status`;\n    break;\n  }\n\n  case 'ingestion_doc_type_override': {\n    if (!body.message_id) throw new Error('ingestion_doc_type_override requires message_id');\n    sql = `UPDATE ingestion_log\n           SET doc_type_override = ${sq(body.doc_type_override)},\n               feedback_status = 'incorrect',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, doc_type_override, feedback_status`;\n    break;\n  }\n\n  case 'ingestion_reassign': {\n    if (!body.message_id || !body.new_deal_id) throw new Error('ingestion_reassign requires message_id and new_deal_id');\n    sql = `UPDATE ingestion_log\n           SET deal_id_override = ${sq(body.new_deal_id)},\n               deal_id = ${sq(body.new_deal_id)},\n               qdrant_namespace = ${sq(body.new_deal_id)},\n               feedback_status = 'incorrect',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, deal_id, deal_id_override, feedback_status`;\n    break;\n  }\n\n  case 'move_to_internal': {\n    if (!body.message_id) throw new Error('move_to_internal requires message_id');\n    sql = `UPDATE ingestion_log\n           SET feedback_status = 'moved_to_internal',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, feedback_status`;\n    break;\n  }\n\n  case 'internal_knowledge_list': {\n    sql = `SELECT il.id, il.message_id, il.deal_id, il.subject, il.sender_email,\n             il.sender_domain, il.doc_type, il.chunk_count, il.ingested_at,\n             il.classification_feedback, il.feedback_at,\n             d.company_name\n           FROM ingestion_log il\n           LEFT JOIN deals d ON d.deal_id = il.deal_id\n           WHERE il.feedback_status = 'moved_to_internal'\n           ORDER BY il.feedback_at DESC\n           LIMIT 200`;\n    break;\n  }\n\n  case 'kb_list': {\n    sql = `SELECT id, title, category, tags, summary, source_type, source_ref,\n             original_deal_id, original_subject, chunk_count, reference_count,\n             created_at, updated_at, is_deleted\n           FROM internal_knowledge\n           WHERE is_deleted = FALSE\n           ORDER BY created_at DESC\n           LIMIT 200`;\n    break;\n  }\n\n  case 'kb_insert': {\n    sql = `INSERT INTO internal_knowledge (title, category, tags, summary, source_type, source_ref, original_deal_id, original_subject, message_id, chunk_count)\n           VALUES (${sq(body.title)}, ${sq(body.category)}, ${body.tags ? \"ARRAY[\" + body.tags.map(t => sq(t)).join(\",\") + \"]\" : \"'{}'\"}, ${sq(body.summary)}, ${sq(body.source_type)}, ${sq(body.source_ref)}, ${sq(body.original_deal_id)}, ${sq(body.original_subject)}, ${sq(body.message_id)}, ${body.chunk_count || 1})\n           RETURNING id`;\n    break;\n  }\n\n  case 'kb_update': {\n    sql = `UPDATE internal_knowledge\n           SET title = COALESCE(${sq(body.title)}, title),\n               category = COALESCE(${sq(body.category)}, category),\n               tags = ${body.tags ? \"ARRAY[\" + body.tags.map(t => sq(t)).join(\",\") + \"]\" : \"tags\"},\n               summary = COALESCE(${sq(body.summary)}, summary),\n               updated_at = NOW()\n           WHERE id = ${parseInt(body.id)}`;\n    break;\n  }\n\n  case 'kb_delete': {\n    sql = `UPDATE internal_knowledge SET is_deleted = TRUE, updated_at = NOW() WHERE id = ${parseInt(body.id)}`;\n    break;\n  }\n\n  case 'kb_stats': {\n    sql = `SELECT category, COUNT(*) as count FROM internal_knowledge WHERE is_deleted = FALSE GROUP BY category ORDER BY count DESC`;\n    break;\n  }\n\n  case 'create_priority': {\n    if (!body.project_name) throw new Error('create_priority requires project_name');\n    const slug = body.project_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');\n    const dealId = 'int_' + slug + '_' + new Date().getFullYear();\n    sql = `INSERT INTO deals (deal_id, company_name, deal_stage, deal_owner, is_active, status)\n           VALUES (${sq(dealId)}, ${sq(body.project_name)}, 'active', 'austin.holland@clearwatersecurity.com', true, 'internal')\n           ON CONFLICT (deal_id) DO NOTHING\n           RETURNING deal_id, company_name`;\n    break;\n  }\n\n\n  case 'dismiss_draft': {\n    const draftId = parseInt(body.draft_id || body.id, 10);\n    const reason = (body.dismiss_reason || '').substring(0, 500);\n    if (!draftId) throw new Error('dismiss_draft requires draft_id');\n    sql = `UPDATE outputs_log SET status = 'dismissed', dismiss_reason = ${sq(reason)} WHERE id = ${draftId} RETURNING id, status, dismiss_reason`;\n    break;\n  }\n\n  case 'output_feedback': {\n    const feedback = (body.feedback || '').substring(0, 500);\n    const summary = body.summary || '';\n    if (!dealId) throw new Error('output_feedback requires deal_id');\n    if (!feedback) throw new Error('output_feedback requires feedback');\n    sql = `UPDATE outputs_log SET dismiss_reason = COALESCE(dismiss_reason, '') || ' [FEEDBACK: ' || ${sq(feedback)} || ']' WHERE deal_id = ${sq(dealId)} AND (subject = ${sq(summary)} OR content_summary = ${sq(summary)}) AND sent_at = (SELECT MAX(sent_at) FROM outputs_log WHERE deal_id = ${sq(dealId)} AND (subject = ${sq(summary)} OR content_summary = ${sq(summary)})) RETURNING id, dismiss_reason`;\n    break;\n  }\n\n\n  case 'remove_stakeholder': {\n    if (!dealId) throw new Error('remove_stakeholder requires deal_id');\n    const stakeholderName = body.stakeholder_name;\n    if (!stakeholderName) throw new Error('remove_stakeholder requires stakeholder_name');\n    sql = `DELETE FROM deal_stakeholders WHERE deal_id = ${sq(dealId)} AND name = ${sq(stakeholderName)} AND scored_at = (SELECT MAX(scored_at) FROM deal_stakeholders WHERE deal_id = ${sq(dealId)} AND name = ${sq(stakeholderName)}) RETURNING name, deal_id`;\n    break;\n  }\n\n  default:\n    throw new Error(`Unknown query_type: ${queryType}`);\n}\n\nreturn [{ json: { query_type: queryType, sql, deal_id: dealId, is_qdrant: false } }];\n"
+            },
+            "id": "cw04b-0002-0000-0000-000000000002",
+            "name": "Code: Route Query",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                460,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "={{ $json.sql }}",
+                "options": {}
+            },
+            "id": "cw04b-0003-0000-0000-000000000003",
+            "name": "Postgres: Execute Query",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2,
+            "position": [
+                880,
+                440
+            ],
+            "credentials": {
+                "postgres": {
+                    "id": "WwO5ZGy91Fw5lSFo",
+                    "name": "Clearwater Postgres"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Collect all rows and return as a clean JSON array\nconst rows = $input.all().map(item => item.json);\nconst queryType = $('Code: Route Query').first().json.query_type;\n\nreturn [{\n  json: {\n    query_type: queryType,\n    row_count: rows.length,\n    rows\n  }\n}];\n"
+            },
+            "id": "cw04b-0004-0000-0000-000000000004",
+            "name": "Code: Format Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1100,
+                440
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify($json) }}",
+                "options": {}
+            },
+            "id": "cw04b-0005-0000-0000-000000000005",
+            "name": "Webhook: Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                1320,
+                440
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "qdrant-check",
+                            "leftValue": "={{ $json.is_qdrant }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals",
+                                "singleValue": true
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "cw3c-if-qdrant-001",
+            "name": "IF: Qdrant Query?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                660,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Build the Qdrant scroll request for chunks_by_message_id\n// Supports two lookup strategies:\n// 1. Live-ingested content: has message_id in Qdrant payload\n// 2. Backfilled content: has source_file in Qdrant payload (no message_id)\nconst input = $input.first().json;\nlet messageId = input.message_id || '';\nconst sourceFile = input.source_file || '';\nconst dealId = input.deal_id || '';\n\n// Strip _att_<filename> suffix \u2014 ingestion_log stores it but Qdrant uses base message_id\nmessageId = messageId.replace(/_att_.*$/, '');\n\n// Detect backfilled content: MD5 hashes (32 hex), bf-prefixed, or _dup_ suffixed\nconst isMd5 = /^[a-f0-9]{32}$/i.test(messageId) || /^bf[a-f0-9]{30}$/i.test(messageId) || /_dup_/.test(messageId);\n\n// Detect if source_file looks like an actual filename vs a calendar/email subject\n// Real filenames end with extensions: .txt, .eml, .pdf, .pptx, .csv, .xlsx, etc.\nconst looksLikeFilename = /\\.[a-z0-9]{2,5}$/i.test(sourceFile);\n\nlet filter;\nif (isMd5 && sourceFile && looksLikeFilename) {\n  // Backfilled with valid filename: query by source_file, scoped to deal_id\n  const must = [{ key: 'source_file', match: { value: sourceFile } }];\n  if (dealId) must.push({ key: 'deal_id', match: { value: dealId } });\n  filter = { must };\n} else if (isMd5 && dealId) {\n  // Backfilled but source_file is not a filename (e.g. calendar title, email subject)\n  // Fall back to deal_id-only query \u2014 returns all chunks for this deal\n  filter = { must: [{ key: 'deal_id', match: { value: dealId } }] };\n} else if (sourceFile && looksLikeFilename) {\n  // Has both \u2014 use should (OR) to match either way\n  const shouldClauses = [\n    { key: 'message_id', match: { value: messageId } },\n    { key: 'source_file', match: { value: sourceFile } }\n  ];\n  const must = dealId ? [{ key: 'deal_id', match: { value: dealId } }] : [];\n  filter = { should: shouldClauses, must };\n} else {\n  // Original behavior: match by message_id only\n  filter = { must: [{ key: 'message_id', match: { value: messageId } }] };\n}\n\nconst qdrantBody = { filter, limit: 100, with_payload: true, with_vector: false };\n\nreturn [{ json: { qdrant_body: qdrantBody, message_id: messageId } }];"
+            },
+            "id": "cw3c-qdrant-build-001",
+            "name": "Code: Build Qdrant Request",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                880,
+                160
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://qdrant:6333/collections/deals/points/scroll",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.qdrant_body) }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "fullResponse": false
+                        }
+                    }
+                }
+            },
+            "id": "cw3c-qdrant-http-001",
+            "name": "HTTP: Qdrant Scroll",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1100,
+                160
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Transform Qdrant scroll response into clean chunks array\nconst response = $input.first().json;\nconst points = response.result && response.result.points ? response.result.points : [];\n\nconst chunks = points.map(p => ({\n  chunk_index: p.payload.chunk_index != null ? p.payload.chunk_index : 0,\n  page_content: p.payload.page_content || p.payload.text || '',\n  doc_type: p.payload.doc_type || 'unknown',\n  date_created: p.payload.date_created || null,\n  deal_id: p.payload.deal_id || null\n})).sort((a, b) => a.chunk_index - b.chunk_index);\n\nreturn [{\n  json: {\n    query_type: 'chunks_by_message_id',\n    row_count: chunks.length,\n    rows: chunks\n  }\n}];\n"
+            },
+            "id": "cw3c-qdrant-transform-001",
+            "name": "Code: Transform Qdrant Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1320,
+                160
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ JSON.stringify($json) }}",
+                "options": {}
+            },
+            "id": "cw3c-qdrant-respond-001",
+            "name": "Webhook: Respond Qdrant",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1540,
+                160
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook: PG Query": {
+            "main": [
+                [
+                    {
+                        "node": "Code: Route Query",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code: Route Query": {
+            "main": [
+                [
+                    {
+                        "node": "IF: Qdrant Query?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Postgres: Execute Query": {
+            "main": [
+                [
+                    {
+                        "node": "Code: Format Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code: Format Response": {
+            "main": [
+                [
+                    {
+                        "node": "Webhook: Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF: Qdrant Query?": {
+            "main": [
+                [
+                    {
+                        "node": "Code: Build Qdrant Request",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Postgres: Execute Query",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code: Build Qdrant Request": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP: Qdrant Scroll",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP: Qdrant Scroll": {
+            "main": [
+                [
+                    {
+                        "node": "Code: Transform Qdrant Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code: Transform Qdrant Response": {
+            "main": [
+                [
+                    {
+                        "node": "Webhook: Respond Qdrant",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "callerPolicy": "workflowsFromSameOwner",
+        "availableInMCP": false
+    },
+    "staticData": null,
+    "meta": null,
+    "pinData": null,
+    "versionId": "89d69f19-337c-4c25-9ace-8cdbdb44aca8",
+    "activeVersionId": "89d69f19-337c-4c25-9ace-8cdbdb44aca8",
+    "versionCounter": 296,
+    "triggerCount": 1,
+    "shared": [
+        {
+            "updatedAt": "2026-02-28T07:30:25.839Z",
+            "createdAt": "2026-02-28T07:30:25.839Z",
+            "role": "workflow:owner",
+            "workflowId": "XDTSkxxWtZUBDECT",
+            "projectId": "AyFYj8ev1hBER3zO",
+            "project": {
+                "updatedAt": "2026-02-26T09:07:37.733Z",
+                "createdAt": "2026-02-26T07:53:31.019Z",
+                "id": "AyFYj8ev1hBER3zO",
+                "name": "Randall raustinholland@gmail.com <raustinholland@gmail.com>",
+                "type": "personal",
+                "icon": null,
+                "description": null,
+                "creatorId": "8a968d0b-280d-4856-b867-bed874846716"
+            }
+        }
+    ],
+    "tags": [],
+    "activeVersion": {
+        "updatedAt": "2026-03-08T20:49:29.670Z",
+        "createdAt": "2026-03-08T20:49:29.670Z",
+        "versionId": "89d69f19-337c-4c25-9ace-8cdbdb44aca8",
+        "workflowId": "XDTSkxxWtZUBDECT",
+        "nodes": [
+            {
+                "parameters": {
+                    "httpMethod": "POST",
+                    "path": "chat-pg-query",
+                    "responseMode": "responseNode",
+                    "options": {}
+                },
+                "id": "cw04b-0001-0000-0000-000000000001",
+                "name": "Webhook: PG Query",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 2,
+                "webhookId": "cw04b-0001-0000-0000-000000000001",
+                "position": [
+                    240,
+                    300
+                ]
+            },
+            {
+                "parameters": {
+                    "jsCode": "function sq(v) {\n  return v == null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\n// Route the incoming query type to a parameter set for the Postgres node\nconst body = $input.first().json.body || {};\nconst queryType = body.query_type || 'deal_health_all';\nconst dealId = body.deal_id || null;\n\n// Special route: chunks_by_message_id goes to Qdrant, not Postgres\nif (queryType === 'chunks_by_message_id') {\n  const messageId = body.message_id;\n  if (!messageId) throw new Error('chunks_by_message_id requires message_id');\n  return [{ json: { query_type: queryType, is_qdrant: true, message_id: messageId, source_file: body.source_file || '', deal_id: body.deal_id || '' } }];\n}\n\n// Build SQL based on query_type\nlet sql;\n\nswitch (queryType) {\n  case 'deal_health_single':\n    if (!dealId) throw new Error('deal_health_single requires deal_id');\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_opp_name, d.salesforce_opp_id, d.salesforce_account_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.deal_owner,\n             d.is_active, d.updated_at,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.champion_title,\n             dh.executive_sponsor_name, dh.executive_sponsor_title,\n             dh.pe_sponsor_score, dh.pe_sponsor_justification,\n             dh.dap_exists, dh.dap_agreed, dh.dap_status,\n             dh.dap_milestones_complete, dh.dap_has_14_day_gap,\n             dh.dap_next_milestone, dh.dap_next_milestone_date, dh.dap_summary,\n             dh.current_state_org, dh.current_state_activities, dh.current_state_technology,\n             dh.future_state_org, dh.future_state_activities, dh.future_state_technology,\n             dh.key_stakeholder_success_criteria, dh.risks,\n             dh.next_step, dh.next_step_date,\n             dh.call_summary, dh.highlights,\n             dh.action_items_prospect, dh.action_items_internal, dh.internal_actions,\n             dh.services_narrative, dh.general_narrative, dh.internal_team_update,\n             dh.trend_direction, dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.deal_id = '${dealId}'\n           LIMIT 1`;\n    break;\n\n  case 'deal_health_all':\n    sql = `SELECT d.deal_id, d.company_name, d.salesforce_opp_name, d.salesforce_opp_id, d.salesforce_account_name, d.salesforce_stage, d.deal_stage,\n             d.deal_value_usd, d.close_date, d.forecast_category, d.is_active,\n             COALESCE(d.status, 'active') AS status,\n             dh.pain_score, dh.power_score, dh.vision_score, dh.value_score,\n             dh.change_score, dh.control_score, dh.p2v2c2_total,\n             dh.critical_activity_stage, dh.champion_name, dh.executive_sponsor_name,\n             dh.next_step, dh.next_step_date, dh.trend_direction,\n             dh.score_vs_previous, dh.scored_at\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           ORDER BY dh.p2v2c2_total DESC NULLS LAST`;\n    break;\n\n  case 'attribution_queue':\n    sql = `SELECT id, sender_email, sender_domain, subject, email_date,\n             ai_guess_deal_id, ai_guess_company, ai_confidence, doc_type, queued_at\n           FROM attribution_queue\n           WHERE resolution = 'pending'\n           ORDER BY queued_at ASC\n           LIMIT 20`;\n    break;\n\n  case 'outputs_log':\n    if (!dealId) throw new Error('outputs_log requires deal_id');\n    sql = `SELECT output_type, recipient_email, recipient_name, subject,\n             content_summary, sent_at, triggered_by\n           FROM outputs_log\n           WHERE deal_id = '${dealId}'\n           ORDER BY sent_at DESC\n           LIMIT 20`;\n    break;\n\n  case 'ingestion_log':\n    sql = `SELECT\n  il.id, il.message_id, il.deal_id, il.subject, il.sender_email,\n  il.sender_domain, il.doc_type, il.attachment_count, il.chunk_count,\n  il.attribution_confidence, il.attribution_status, il.ingested_at,\n  il.qdrant_namespace,\n  il.classification_reasoning,\n  il.classification_feedback,\n  il.doc_type_override,\n  il.deal_id_override,\n  il.feedback_status,\n  il.feedback_at,\n  d.company_name,\n  d.status as deal_status\nFROM ingestion_log il\nLEFT JOIN deals d ON d.deal_id = il.deal_id\nORDER BY il.ingested_at DESC\nLIMIT 500`;\n    break;\n\n  case 'pipeline_summary':\n    sql = `SELECT d.deal_stage, d.forecast_category,\n             COUNT(*) AS deal_count,\n             SUM(d.deal_value_usd) AS total_value,\n             ROUND(AVG(dh.p2v2c2_total), 1) AS avg_p2v2c2,\n             COUNT(CASE WHEN dh.trend_direction = 'declining' THEN 1 END) AS declining_deals\n           FROM deals d\n           LEFT JOIN LATERAL (\n             SELECT * FROM deal_health WHERE deal_id = d.deal_id ORDER BY scored_at DESC LIMIT 1\n           ) dh ON true\n           WHERE d.is_active = true\n           GROUP BY d.deal_stage, d.forecast_category\n           ORDER BY d.deal_stage`;\n    break;\n\n  case 'confirm_attribution':\n    const msgId = body.message_id || null;\n    const resolvedDealId = body.resolved_deal_id || null;\n    const resolution = body.resolution || 'confirmed';\n    if (!msgId) throw new Error('confirm_attribution requires message_id');\n    sql = `UPDATE attribution_queue\n           SET resolution = '${resolution}',\n               resolved_deal_id = ${resolvedDealId ? `'${resolvedDealId}'` : 'NULL'},\n               resolved_at = NOW()\n           WHERE message_id = '${msgId}'\n           RETURNING id, message_id, resolution, resolved_deal_id`;\n    break;\n\n  case 'error_status':\n    sql = `SELECT COUNT(*) as cnt, COALESCE(MAX(severity), 'none') as max_sev FROM workflow_errors WHERE acknowledged = FALSE`;\n    break;\n\n\n  case 'scoring_history':\n    if (!dealId) throw new Error('scoring_history requires deal_id');\n    sql = `SELECT scored_at, trigger_type,\n             pain_score, power_score, vision_score, value_score, change_score, control_score,\n             critical_activity_stage, general_narrative, call_summary,\n             pain_justification, power_justification, vision_justification,\n             value_justification, change_justification, control_justification,\n             trigger_message_id\n           FROM deal_health\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY scored_at DESC\n           LIMIT 50`;\n    break;\n\n  case 'activity_timeline':\n    if (!dealId) throw new Error('activity_timeline requires deal_id');\n    sql = `SELECT\n             'notification' AS event_type,\n             created_at AS event_time,\n             notification_type AS sub_type,\n             summary,\n             context::text AS context,\n             NULL AS message_id\n           FROM deal_notifications\n           WHERE deal_id = ${sq(dealId)}\n           UNION ALL\n           SELECT\n             'ingestion' AS event_type,\n             ingested_at AS event_time,\n             doc_type AS sub_type,\n             COALESCE(subject, doc_type) AS summary,\n             json_build_object('sender', sender_email, 'chunks', chunk_count, 'attribution', attribution_status)::text AS context,\n             message_id\n           FROM ingestion_log\n           WHERE deal_id = ${sq(dealId)}\n           UNION ALL\n           SELECT\n             CASE\n               WHEN status = 'dismissed' THEN 'draft_dismissed'\n               WHEN status = 'approved' THEN 'draft_approved'\n               WHEN status = 'sent' THEN 'output'\n               ELSE 'output'\n             END AS event_type,\n             sent_at AS event_time,\n             output_type AS sub_type,\n             COALESCE(subject, output_type) AS summary,\n             json_build_object('recipient', recipient_email, 'status', status, 'dismiss_reason', dismiss_reason)::text AS context,\n             NULL AS message_id\n           FROM outputs_log\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY event_time DESC\n           LIMIT 100`;\n    break;\n\n  case 'deal_documents':\n    if (!dealId) throw new Error('deal_documents requires deal_id');\n    sql = `SELECT message_id, deal_id, doc_type, subject, sender_email, sender_domain,\n             chunk_count, ingested_at, attribution_status, classification_reasoning\n           FROM ingestion_log\n           WHERE deal_id = ${sq(dealId)}\n           ORDER BY ingested_at DESC\n           LIMIT 100`;\n    break;\n\n  case 'reassign_document': {\n    const messageId = body.message_id;\n    const fromDealId = body.from_deal_id;\n    const toDealId = body.to_deal_id;\n    if (!messageId || !toDealId) throw new Error('reassign_document requires message_id and to_deal_id');\n    sql = `UPDATE ingestion_log SET deal_id = ${sq(toDealId)}, attribution_status = 'reassigned'\n           WHERE message_id = ${sq(messageId)}\n           RETURNING id, message_id, deal_id`;\n    break;\n  }\n\n  case 'remove_document': {\n    const msgId2 = body.message_id;\n    const removeDealId = body.deal_id;\n    if (!msgId2) throw new Error('remove_document requires message_id');\n    sql = `UPDATE ingestion_log SET deal_id = NULL, attribution_status = 'removed'\n           WHERE message_id = ${sq(msgId2)}\n           RETURNING id, message_id, deal_id`;\n    break;\n  }\n\n  case 'revert_score': {\n    const triggerMsgId = body.trigger_message_id;\n    if (!triggerMsgId) throw new Error('revert_score requires trigger_message_id');\n    sql = `DELETE FROM deal_health WHERE trigger_message_id = ${sq(triggerMsgId)} RETURNING id, deal_id, scored_at`;\n    break;\n  }\n\n  case 'update_deal_status': {\n    const targetDealId = body.deal_id;\n    const newStatus = body.status;\n    if (!targetDealId || !newStatus) throw new Error('update_deal_status requires deal_id and status');\n    if (!['active','internal','archived'].includes(newStatus)) throw new Error('Invalid status value');\n    const isActive = newStatus === 'active' ? 'true' : 'false';\n    sql = `UPDATE deals SET status = ${sq(newStatus)}, is_active = ${isActive}, updated_at = NOW()\n           WHERE deal_id = ${sq(targetDealId)}\n           RETURNING deal_id, status, is_active`;\n    break;\n  }\n\n  case 'ingestion_feedback': {\n    if (!body.message_id) throw new Error('ingestion_feedback requires message_id');\n    sql = `UPDATE ingestion_log\n           SET feedback_status = ${sq(body.feedback_status)},\n               classification_feedback = ${sq(body.classification_feedback)},\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, feedback_status`;\n    break;\n  }\n\n  case 'ingestion_doc_type_override': {\n    if (!body.message_id) throw new Error('ingestion_doc_type_override requires message_id');\n    sql = `UPDATE ingestion_log\n           SET doc_type_override = ${sq(body.doc_type_override)},\n               feedback_status = 'incorrect',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, doc_type_override, feedback_status`;\n    break;\n  }\n\n  case 'ingestion_reassign': {\n    if (!body.message_id || !body.new_deal_id) throw new Error('ingestion_reassign requires message_id and new_deal_id');\n    sql = `UPDATE ingestion_log\n           SET deal_id_override = ${sq(body.new_deal_id)},\n               deal_id = ${sq(body.new_deal_id)},\n               qdrant_namespace = ${sq(body.new_deal_id)},\n               feedback_status = 'incorrect',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, deal_id, deal_id_override, feedback_status`;\n    break;\n  }\n\n  case 'move_to_internal': {\n    if (!body.message_id) throw new Error('move_to_internal requires message_id');\n    sql = `UPDATE ingestion_log\n           SET feedback_status = 'moved_to_internal',\n               classification_feedback = COALESCE(${sq(body.classification_feedback)}, classification_feedback),\n               feedback_at = NOW()\n           WHERE message_id = ${sq(body.message_id)}\n           RETURNING id, message_id, feedback_status`;\n    break;\n  }\n\n  case 'internal_knowledge_list': {\n    sql = `SELECT il.id, il.message_id, il.deal_id, il.subject, il.sender_email,\n             il.sender_domain, il.doc_type, il.chunk_count, il.ingested_at,\n             il.classification_feedback, il.feedback_at,\n             d.company_name\n           FROM ingestion_log il\n           LEFT JOIN deals d ON d.deal_id = il.deal_id\n           WHERE il.feedback_status = 'moved_to_internal'\n           ORDER BY il.feedback_at DESC\n           LIMIT 200`;\n    break;\n  }\n\n  case 'kb_list': {\n    sql = `SELECT id, title, category, tags, summary, source_type, source_ref,\n             original_deal_id, original_subject, chunk_count, reference_count,\n             created_at, updated_at, is_deleted\n           FROM internal_knowledge\n           WHERE is_deleted = FALSE\n           ORDER BY created_at DESC\n           LIMIT 200`;\n    break;\n  }\n\n  case 'kb_insert': {\n    sql = `INSERT INTO internal_knowledge (title, category, tags, summary, source_type, source_ref, original_deal_id, original_subject, message_id, chunk_count)\n           VALUES (${sq(body.title)}, ${sq(body.category)}, ${body.tags ? \"ARRAY[\" + body.tags.map(t => sq(t)).join(\",\") + \"]\" : \"'{}'\"}, ${sq(body.summary)}, ${sq(body.source_type)}, ${sq(body.source_ref)}, ${sq(body.original_deal_id)}, ${sq(body.original_subject)}, ${sq(body.message_id)}, ${body.chunk_count || 1})\n           RETURNING id`;\n    break;\n  }\n\n  case 'kb_update': {\n    sql = `UPDATE internal_knowledge\n           SET title = COALESCE(${sq(body.title)}, title),\n               category = COALESCE(${sq(body.category)}, category),\n               tags = ${body.tags ? \"ARRAY[\" + body.tags.map(t => sq(t)).join(\",\") + \"]\" : \"tags\"},\n               summary = COALESCE(${sq(body.summary)}, summary),\n               updated_at = NOW()\n           WHERE id = ${parseInt(body.id)}`;\n    break;\n  }\n\n  case 'kb_delete': {\n    sql = `UPDATE internal_knowledge SET is_deleted = TRUE, updated_at = NOW() WHERE id = ${parseInt(body.id)}`;\n    break;\n  }\n\n  case 'kb_stats': {\n    sql = `SELECT category, COUNT(*) as count FROM internal_knowledge WHERE is_deleted = FALSE GROUP BY category ORDER BY count DESC`;\n    break;\n  }\n\n  case 'create_priority': {\n    if (!body.project_name) throw new Error('create_priority requires project_name');\n    const slug = body.project_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');\n    const dealId = 'int_' + slug + '_' + new Date().getFullYear();\n    sql = `INSERT INTO deals (deal_id, company_name, deal_stage, deal_owner, is_active, status)\n           VALUES (${sq(dealId)}, ${sq(body.project_name)}, 'active', 'austin.holland@clearwatersecurity.com', true, 'internal')\n           ON CONFLICT (deal_id) DO NOTHING\n           RETURNING deal_id, company_name`;\n    break;\n  }\n\n\n  case 'dismiss_draft': {\n    const draftId = parseInt(body.draft_id || body.id, 10);\n    const reason = (body.dismiss_reason || '').substring(0, 500);\n    if (!draftId) throw new Error('dismiss_draft requires draft_id');\n    sql = `UPDATE outputs_log SET status = 'dismissed', dismiss_reason = ${sq(reason)} WHERE id = ${draftId} RETURNING id, status, dismiss_reason`;\n    break;\n  }\n\n  case 'output_feedback': {\n    const feedback = (body.feedback || '').substring(0, 500);\n    const summary = body.summary || '';\n    if (!dealId) throw new Error('output_feedback requires deal_id');\n    if (!feedback) throw new Error('output_feedback requires feedback');\n    sql = `UPDATE outputs_log SET dismiss_reason = COALESCE(dismiss_reason, '') || ' [FEEDBACK: ' || ${sq(feedback)} || ']' WHERE deal_id = ${sq(dealId)} AND (subject = ${sq(summary)} OR content_summary = ${sq(summary)}) AND sent_at = (SELECT MAX(sent_at) FROM outputs_log WHERE deal_id = ${sq(dealId)} AND (subject = ${sq(summary)} OR content_summary = ${sq(summary)})) RETURNING id, dismiss_reason`;\n    break;\n  }\n\n\n  case 'remove_stakeholder': {\n    if (!dealId) throw new Error('remove_stakeholder requires deal_id');\n    const stakeholderName = body.stakeholder_name;\n    if (!stakeholderName) throw new Error('remove_stakeholder requires stakeholder_name');\n    sql = `DELETE FROM deal_stakeholders WHERE deal_id = ${sq(dealId)} AND name = ${sq(stakeholderName)} AND scored_at = (SELECT MAX(scored_at) FROM deal_stakeholders WHERE deal_id = ${sq(dealId)} AND name = ${sq(stakeholderName)}) RETURNING name, deal_id`;\n    break;\n  }\n\n  default:\n    throw new Error(`Unknown query_type: ${queryType}`);\n}\n\nreturn [{ json: { query_type: queryType, sql, deal_id: dealId, is_qdrant: false } }];\n"
+                },
+                "id": "cw04b-0002-0000-0000-000000000002",
+                "name": "Code: Route Query",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 2,
+                "position": [
+                    460,
+                    300
+                ]
+            },
+            {
+                "parameters": {
+                    "operation": "executeQuery",
+                    "query": "={{ $json.sql }}",
+                    "options": {}
+                },
+                "id": "cw04b-0003-0000-0000-000000000003",
+                "name": "Postgres: Execute Query",
+                "type": "n8n-nodes-base.postgres",
+                "typeVersion": 2,
+                "position": [
+                    880,
+                    440
+                ],
+                "credentials": {
+                    "postgres": {
+                        "id": "WwO5ZGy91Fw5lSFo",
+                        "name": "Clearwater Postgres"
+                    }
+                }
+            },
+            {
+                "parameters": {
+                    "jsCode": "// Collect all rows and return as a clean JSON array\nconst rows = $input.all().map(item => item.json);\nconst queryType = $('Code: Route Query').first().json.query_type;\n\nreturn [{\n  json: {\n    query_type: queryType,\n    row_count: rows.length,\n    rows\n  }\n}];\n"
+                },
+                "id": "cw04b-0004-0000-0000-000000000004",
+                "name": "Code: Format Response",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 2,
+                "position": [
+                    1100,
+                    440
+                ]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ JSON.stringify($json) }}",
+                    "options": {}
+                },
+                "id": "cw04b-0005-0000-0000-000000000005",
+                "name": "Webhook: Respond",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1,
+                "position": [
+                    1320,
+                    440
+                ]
+            },
+            {
+                "parameters": {
+                    "conditions": {
+                        "options": {
+                            "caseSensitive": true,
+                            "leftValue": "",
+                            "typeValidation": "strict"
+                        },
+                        "conditions": [
+                            {
+                                "id": "qdrant-check",
+                                "leftValue": "={{ $json.is_qdrant }}",
+                                "rightValue": true,
+                                "operator": {
+                                    "type": "boolean",
+                                    "operation": "equals",
+                                    "singleValue": true
+                                }
+                            }
+                        ],
+                        "combinator": "and"
+                    },
+                    "options": {}
+                },
+                "id": "cw3c-if-qdrant-001",
+                "name": "IF: Qdrant Query?",
+                "type": "n8n-nodes-base.if",
+                "typeVersion": 2,
+                "position": [
+                    660,
+                    300
+                ]
+            },
+            {
+                "parameters": {
+                    "jsCode": "// Build the Qdrant scroll request for chunks_by_message_id\n// Supports two lookup strategies:\n// 1. Live-ingested content: has message_id in Qdrant payload\n// 2. Backfilled content: has source_file in Qdrant payload (no message_id)\nconst input = $input.first().json;\nlet messageId = input.message_id || '';\nconst sourceFile = input.source_file || '';\nconst dealId = input.deal_id || '';\n\n// Strip _att_<filename> suffix \u2014 ingestion_log stores it but Qdrant uses base message_id\nmessageId = messageId.replace(/_att_.*$/, '');\n\n// Detect backfilled content: MD5 hashes (32 hex), bf-prefixed, or _dup_ suffixed\nconst isMd5 = /^[a-f0-9]{32}$/i.test(messageId) || /^bf[a-f0-9]{30}$/i.test(messageId) || /_dup_/.test(messageId);\n\n// Detect if source_file looks like an actual filename vs a calendar/email subject\n// Real filenames end with extensions: .txt, .eml, .pdf, .pptx, .csv, .xlsx, etc.\nconst looksLikeFilename = /\\.[a-z0-9]{2,5}$/i.test(sourceFile);\n\nlet filter;\nif (isMd5 && sourceFile && looksLikeFilename) {\n  // Backfilled with valid filename: query by source_file, scoped to deal_id\n  const must = [{ key: 'source_file', match: { value: sourceFile } }];\n  if (dealId) must.push({ key: 'deal_id', match: { value: dealId } });\n  filter = { must };\n} else if (isMd5 && dealId) {\n  // Backfilled but source_file is not a filename (e.g. calendar title, email subject)\n  // Fall back to deal_id-only query \u2014 returns all chunks for this deal\n  filter = { must: [{ key: 'deal_id', match: { value: dealId } }] };\n} else if (sourceFile && looksLikeFilename) {\n  // Has both \u2014 use should (OR) to match either way\n  const shouldClauses = [\n    { key: 'message_id', match: { value: messageId } },\n    { key: 'source_file', match: { value: sourceFile } }\n  ];\n  const must = dealId ? [{ key: 'deal_id', match: { value: dealId } }] : [];\n  filter = { should: shouldClauses, must };\n} else {\n  // Original behavior: match by message_id only\n  filter = { must: [{ key: 'message_id', match: { value: messageId } }] };\n}\n\nconst qdrantBody = { filter, limit: 100, with_payload: true, with_vector: false };\n\nreturn [{ json: { qdrant_body: qdrantBody, message_id: messageId } }];"
+                },
+                "id": "cw3c-qdrant-build-001",
+                "name": "Code: Build Qdrant Request",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 2,
+                "position": [
+                    880,
+                    160
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "POST",
+                    "url": "http://qdrant:6333/collections/deals/points/scroll",
+                    "sendBody": true,
+                    "specifyBody": "json",
+                    "jsonBody": "={{ JSON.stringify($json.qdrant_body) }}",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": false
+                            }
+                        }
+                    }
+                },
+                "id": "cw3c-qdrant-http-001",
+                "name": "HTTP: Qdrant Scroll",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.2,
+                "position": [
+                    1100,
+                    160
+                ]
+            },
+            {
+                "parameters": {
+                    "jsCode": "// Transform Qdrant scroll response into clean chunks array\nconst response = $input.first().json;\nconst points = response.result && response.result.points ? response.result.points : [];\n\nconst chunks = points.map(p => ({\n  chunk_index: p.payload.chunk_index != null ? p.payload.chunk_index : 0,\n  page_content: p.payload.page_content || p.payload.text || '',\n  doc_type: p.payload.doc_type || 'unknown',\n  date_created: p.payload.date_created || null,\n  deal_id: p.payload.deal_id || null\n})).sort((a, b) => a.chunk_index - b.chunk_index);\n\nreturn [{\n  json: {\n    query_type: 'chunks_by_message_id',\n    row_count: chunks.length,\n    rows: chunks\n  }\n}];\n"
+                },
+                "id": "cw3c-qdrant-transform-001",
+                "name": "Code: Transform Qdrant Response",
+                "type": "n8n-nodes-base.code",
+                "typeVersion": 2,
+                "position": [
+                    1320,
+                    160
+                ]
+            },
+            {
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": "={{ JSON.stringify($json) }}",
+                    "options": {}
+                },
+                "id": "cw3c-qdrant-respond-001",
+                "name": "Webhook: Respond Qdrant",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1.1,
+                "position": [
+                    1540,
+                    160
+                ]
+            }
+        ],
+        "connections": {
+            "Webhook: PG Query": {
+                "main": [
+                    [
+                        {
+                            "node": "Code: Route Query",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Code: Route Query": {
+                "main": [
+                    [
+                        {
+                            "node": "IF: Qdrant Query?",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Postgres: Execute Query": {
+                "main": [
+                    [
+                        {
+                            "node": "Code: Format Response",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Code: Format Response": {
+                "main": [
+                    [
+                        {
+                            "node": "Webhook: Respond",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "IF: Qdrant Query?": {
+                "main": [
+                    [
+                        {
+                            "node": "Code: Build Qdrant Request",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ],
+                    [
+                        {
+                            "node": "Postgres: Execute Query",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Code: Build Qdrant Request": {
+                "main": [
+                    [
+                        {
+                            "node": "HTTP: Qdrant Scroll",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "HTTP: Qdrant Scroll": {
+                "main": [
+                    [
+                        {
+                            "node": "Code: Transform Qdrant Response",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Code: Transform Qdrant Response": {
+                "main": [
+                    [
+                        {
+                            "node": "Webhook: Respond Qdrant",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            }
+        },
+        "authors": "Randall raustinholland@gmail.com",
+        "name": null,
+        "description": null,
+        "autosaved": false,
+        "workflowPublishHistory": [
+            {
+                "createdAt": "2026-03-08T20:49:29.717Z",
+                "id": 948,
+                "workflowId": "XDTSkxxWtZUBDECT",
+                "versionId": "89d69f19-337c-4c25-9ace-8cdbdb44aca8",
+                "event": "deactivated",
+                "userId": "8a968d0b-280d-4856-b867-bed874846716"
+            },
+            {
+                "createdAt": "2026-03-08T20:49:29.731Z",
+                "id": 949,
+                "workflowId": "XDTSkxxWtZUBDECT",
+                "versionId": "89d69f19-337c-4c25-9ace-8cdbdb44aca8",
+                "event": "activated",
+                "userId": "8a968d0b-280d-4856-b867-bed874846716"
+            }
+        ]
+    }
+}
