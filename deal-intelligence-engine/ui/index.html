@@ -3284,7 +3284,7 @@ addEventListener('DOMContentLoaded', async () => {
   const hashParts = rawHash.split('/');
   const hashView = hashParts[0];
   const hashDeal = hashParts[1] || null;
-  switchView(validViews.includes(hashView) ? hashView : 'global');
+  switchView(validViews.includes(hashView) ? hashView : 'global', hashDeal ? {suppressDrawer: true} : undefined);
   if (hashView === 'detail' && hashDeal) {
     selectDeal(hashDeal);
   }
