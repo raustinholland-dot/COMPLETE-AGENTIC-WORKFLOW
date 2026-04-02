@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Input-Output Chronological Map</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 20px; }
+        .container { max-width: 100%; margin: 0 auto; }
+        h1 { margin-bottom: 20px; font-size: 1.5em; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border: 1px solid #444; }
+        th { background: #2a5298; color: white; font-weight: bold; }
+        tr:nth-child(even) { background: #1e1e1e; }
+        tr:nth-child(odd) { background: #252525; }
+
+        .input-cell { width: 45%; }
+        .output-cell { width: 45%; }
+        .time-cell { width: 10%; font-size: 0.9em; color: #888; }
+
+        .input-type { display: inline-block; padding: 2px 6px; background: #444; border-radius: 3px; font-size: 0.8em; margin-bottom: 4px; }
+        .email { background: #2a4a7a; }
+        .teams { background: #4a2a7a; }
+        .calendar { background: #2a7a4a; }
+
+        .subject { font-weight: bold; color: #5a9fd4; }
+        .from { font-size: 0.9em; color: #888; }
+        .preview { font-size: 0.85em; color: #999; margin-top: 4px; }
+
+        .output-item { margin-bottom: 6px; padding: 4px; background: #2a2a2a; border-left: 3px solid #5a9fd4; }
+        .output-desc { font-weight: bold; }
+        .output-file { font-size: 0.85em; color: #5a9fd4; }
+        .output-condition { font-size: 0.85em; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Input-Output Chronological Map</h1>
+        <p style="margin-bottom: 20px; color: #888;">All inputs and corresponding outputs, sorted by time</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th class="input-cell">INPUT (Email / Teams / Calendar)</th>
+                    <th class="output-cell">OUTPUT (Files to Update)</th>
+                </tr>
+            </thead>
+            <tbody id="mapBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const data = [
+            {
+                time: "2026-03-31 9:47 PM CT",
+                input: {
+                    type: "email",
+                    from: "John Santana (Salesforce)",
+                    subject: "ACTION REQUIRED: Follow-On Opportunity Validation - Athena Holdco MSO",
+                    preview: "Follow-on opportunity identified in existing client account"
+                },
+                outputs: [
+                    { desc: "Add task to tasks/index.md", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-03-31.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-03-31 9:43 PM CT",
+                input: {
+                    type: "email",
+                    from: "John Santana (Salesforce)",
+                    subject: "ACTION REQUIRED: Follow-On Opportunity Validation - PL Topco Holdings LLC",
+                    preview: "Follow-on opportunity identified in existing client account"
+                },
+                outputs: [
+                    { desc: "Add task to tasks/index.md", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-03-31.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 8:32 AM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "FW: 2026 Behavioral Health Workforce Outlook / CapGrow",
+                    preview: "Richmond flagging CapGrow conference (ANCOR Connect, April 21-23)"
+                },
+                outputs: [
+                    { desc: "Create event file", file: "ops/events/conferences/ancor-connect-2026.md", condition: "always" },
+                    { desc: "Update events index", file: "ops/events/index.md", condition: "always" },
+                    { desc: "Create contact entry for Dene", file: "reference/deal-contacts.md", condition: "if no record exists" },
+                    { desc: "Add task: reach out to Dene", file: "ops/tasks/index.md", condition: "if prior relationship" },
+                    { desc: "Note reply in memory", file: "memory/2026-04-01.md", condition: "always" },
+                    { desc: "Draft reply to Richmond", file: "Email draft → Telegram", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 11:54 AM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "Ephicacy Updates",
+                    preview: "Teams meeting link for Ephicacy deal"
+                },
+                outputs: [
+                    { desc: "Update Ephicacy deal state", file: "deals/ephicacy/deal-state.md", condition: "always" },
+                    { desc: "Add calendar context", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 11:55 AM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "RE: Ephicacy SOW Ending 5/31/26",
+                    preview: "Richmond scheduled internal Ephicacy meeting"
+                },
+                outputs: [
+                    { desc: "Note meeting in deal state", file: "deals/ephicacy/deal-state.md", condition: "always" },
+                    { desc: "Update memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 1:07 PM CT",
+                input: {
+                    type: "email",
+                    from: "Sarah (sarahs@holisticwellness.clinic)",
+                    subject: "Re: Following Up - Clearwater | Holistic Wellness",
+                    preview: "Sarah confirmed Friday 4/3 at 11am CST for call"
+                },
+                outputs: [
+                    { desc: "Update Holistic Wellness deal state", file: "deals/holistic-wellness/deal-state.md", condition: "always" },
+                    { desc: "Add calendar event confirmation", file: "ops/events/client-meetings/holistic-wellness-4-3.md", condition: "always" },
+                    { desc: "Create meeting prep task", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 1:26 PM CT",
+                input: {
+                    type: "email",
+                    from: "Salesforce Chatter",
+                    subject: "Caryn Straub mentioned you in a comment (PANTHERx SOW)",
+                    preview: "PANTHERx SOW #1 vCISO ready for client review"
+                },
+                outputs: [
+                    { desc: "Update PANTHERx deal state", file: "deals/pantherx-rare/deal-state.md", condition: "always" },
+                    { desc: "Flag for client approval review", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 1:26 PM CT",
+                input: {
+                    type: "email",
+                    from: "Salesforce Chatter",
+                    subject: "Caryn Straub mentioned you in a post (PANTHERx F-08037)",
+                    preview: "F-08037 updated to 'Under Client Review'"
+                },
+                outputs: [
+                    { desc: "Update PANTHERx deal state", file: "deals/pantherx-rare/deal-state.md", condition: "always" },
+                    { desc: "Track pricing status", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 3:14 PM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "RE: Pyramids | Clearwater",
+                    preview: "Richmond asking to confirm April or May for Pyramids meeting"
+                },
+                outputs: [
+                    { desc: "Update Pyramids deal state", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+                    { desc: "Note calendar decision pending", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Add to memory", file: "memory/2026-04-01.md", condition: "always" },
+                    { desc: "Draft reply to Richmond", file: "Email draft → Telegram", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 5:26 PM CT",
+                input: {
+                    type: "email",
+                    from: "Leihlani Bajacan (Pyramids CFO)",
+                    subject: "RE: Pyramids | Clearwater",
+                    preview: "Leihlani confirmed May, needs to handle quarter-end"
+                },
+                outputs: [
+                    { desc: "Update Pyramids deal state with date", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+                    { desc: "Add calendar event for May meeting", file: "ops/events/client-meetings/pyramids-5-8.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 5:31 PM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "RE: Pyramids | Clearwater",
+                    preview: "Richmond sent May availability options (5/5-5/8)"
+                },
+                outputs: [
+                    { desc: "Update Pyramids deal state", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 5:42 PM CT",
+                input: {
+                    type: "email",
+                    from: "Leihlani Bajacan (Pyramids CFO)",
+                    subject: "RE: Pyramids | Clearwater",
+                    preview: "Leihlani confirmed Friday 5/8 @ 10am"
+                },
+                outputs: [
+                    { desc: "Update Pyramids deal state with confirmed date", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+                    { desc: "Update calendar event", file: "ops/events/client-meetings/pyramids-5-8.md", condition: "always" },
+                    { desc: "Add prep task 30-60 min before", file: "ops/tasks/index.md", condition: "always" },
+                    { desc: "Note in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            },
+            {
+                time: "2026-04-01 5:44 PM CT",
+                input: {
+                    type: "email",
+                    from: "Richmond Donnelly",
+                    subject: "RE: Pyramids | Clearwater",
+                    preview: "Richmond confirmed and updated invite"
+                },
+                outputs: [
+                    { desc: "Update Pyramids deal state", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+                    { desc: "Note confirmation in memory", file: "memory/2026-04-01.md", condition: "always" }
+                ]
+            }
+        ];
+
+        function renderMap() {
+            const tbody = document.getElementById('mapBody');
+            tbody.innerHTML = data.map(row => {
+                const typeClass = row.input.type.toLowerCase();
+                const outputsHTML = row.outputs.map(o => `
+                    <div class="output-item">
+                        <div class="output-desc">${o.desc}</div>
+                        <div class="output-file">→ ${o.file}</div>
+                        <div class="output-condition">[${o.condition}]</div>
+                    </div>
+                `).join('');
+
+                return `
+                    <tr>
+                        <td class="time-cell">${row.time}</td>
+                        <td class="input-cell">
+                            <span class="input-type ${typeClass}">${row.input.type.toUpperCase()}</span>
+                            <div class="subject">${row.input.subject}</div>
+                            <div class="from">${row.input.from}</div>
+                            <div class="preview">${row.input.preview}</div>
+                        </td>
+                        <td class="output-cell">
+                            ${outputsHTML}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        renderMap();
+    </script>
+</body>
+</html>

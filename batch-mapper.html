@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Input-Output Batch Mapper</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 20px; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        header { margin-bottom: 20px; }
+        h1 { font-size: 1.5em; margin-bottom: 10px; }
+        .controls { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { padding: 8px 12px; background: #2a5298; color: white; border: none; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #1e3c72; }
+        input[type="text"] { padding: 8px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; min-width: 200px; }
+
+        .main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .column { border: 1px solid #444; border-radius: 4px; padding: 15px; background: #222; }
+        .column h2 { font-size: 1.2em; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+
+        /* LEFT COLUMN - INPUTS */
+        .inputs-list { max-height: 70vh; overflow-y: auto; }
+        .input-item { padding: 10px; margin-bottom: 8px; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; cursor: pointer; }
+        .input-item:hover { background: #333; }
+        .input-item.selected { background: #2a5298; border-color: #5a9fd4; }
+        .input-item input[type="checkbox"] { margin-right: 8px; }
+        .input-time { font-size: 0.9em; color: #888; }
+        .input-type { display: inline-block; padding: 2px 6px; background: #444; border-radius: 3px; font-size: 0.85em; margin-top: 4px; }
+
+        /* RIGHT COLUMN - OUTPUTS */
+        .batch-info { padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; margin-bottom: 15px; }
+        .batch-name { margin-bottom: 8px; }
+        .selected-inputs { font-size: 0.9em; color: #888; }
+
+        .outputs-list { max-height: 60vh; overflow-y: auto; }
+        .output-item { padding: 10px; margin-bottom: 8px; background: #2a2a2a; border: 1px solid #444; border-radius: 4px; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; }
+        .output-desc { font-size: 0.9em; }
+        .output-file { color: #5a9fd4; font-size: 0.85em; }
+        .output-condition { color: #888; font-size: 0.85em; }
+        .btn-remove { padding: 4px 8px; background: #8b0000; font-size: 0.85em; }
+
+        /* BATCH CONTROLS */
+        .batch-controls { margin-top: 20px; display: flex; gap: 10px; }
+        .batch-controls button { flex: 1; }
+
+        /* BOTTOM SECTION */
+        .bottom { margin-top: 20px; padding: 15px; background: #222; border: 1px solid #444; border-radius: 4px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 15px; font-size: 0.9em; }
+        .stat { }
+        .stat-label { color: #888; }
+        .stat-value { font-weight: bold; }
+
+        textarea { width: 100%; height: 150px; padding: 10px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Input-Output Batch Mapper</h1>
+            <p style="color: #888; font-size: 0.9em;">Map inputs (email, Teams, calendar) to outputs in batches</p>
+        </header>
+
+        <div class="controls">
+            <button onclick="resetToEarliest()" style="background: #5a9fd4;">🔄 Refresh (Start from earliest)</button>
+            <div style="display: inline-block; margin-left: 20px;">
+                <input type="text" id="batchName" placeholder="Batch name (e.g., 'Pyramids thread')" style="width: 300px; margin-right: 10px;">
+                <button onclick="createNewBatch()">Create Batch</button>
+                <button onclick="clearSelection()">Clear Selection</button>
+            </div>
+        </div>
+
+        <div class="main">
+            <!-- LEFT: INPUTS -->
+            <div class="column">
+                <h2>📥 Inputs</h2>
+                <div class="inputs-list" id="inputsList"></div>
+                <div id="selectedInputDetails" style="margin-top: 20px; padding: 15px; background: #2a2a2a; border: 1px solid #5a9fd4; border-radius: 4px; display: none;">
+                    <h3 style="margin-bottom: 10px;">📋 Full Input Details</h3>
+                    <div id="detailsContent" style="font-size: 0.9em; line-height: 1.6;"></div>
+                </div>
+            </div>
+
+            <!-- RIGHT: OUTPUTS -->
+            <div class="column">
+                <h2>📤 Outputs</h2>
+                <div class="batch-info" id="batchInfo" style="display: none;">
+                    <div class="batch-name">Batch: <strong id="currentBatchName"></strong></div>
+                    <div class="selected-inputs">Selected inputs: <strong id="selectedCount">0</strong></div>
+                </div>
+                <button onclick="addOutput()" style="width: 100%; margin-bottom: 10px;">+ Add Output</button>
+                <div class="outputs-list" id="outputsList"></div>
+            </div>
+        </div>
+
+        <!-- BOTTOM: MAPPING PREVIEW & SAVE -->
+        <div class="bottom">
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Total Inputs Loaded:</span>
+                    <span class="stat-value" id="totalInputs">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Batches Created:</span>
+                    <span class="stat-value" id="batchCount">0</span>
+                </div>
+            </div>
+
+            <h3>Batch Mapping Preview (Markdown)</h3>
+            <textarea id="mappingPreview" readonly placeholder="Mapping will appear here..."></textarea>
+
+            <div class="batch-controls">
+                <button onclick="saveBatch()">💾 Save Batch Mapping</button>
+                <button onclick="exportAllMappings()">📥 Export All Mappings</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Sample data structure
+        let inputOutputMap = {
+            "INPUT-000": [
+                { desc: "Update memory with briefing", file: "memory/2026-03-27.md", condition: "always" },
+                { desc: "Note key deals discussed", file: "MEMORY.md", condition: "always" }
+            ],
+        };
+
+        let inputs = [
+            {
+                id: "INPUT-000",
+                time: "2026-03-27 07:15 AM CT",
+                from: "David Kolb",
+                type: "email",
+                subject: "Morning check-in",
+                preview: "Quick sync on Q1 pipeline status"
+            },
+            {
+                id: "INPUT-001",
+                time: "2026-04-01 08:32 AM CT",
+                from: "Richmond Donnelly",
+                type: "email",
+                subject: "FW: Behavioral Health Workforce Outlook / CapGrow at ANCOR Connect",
+                preview: "Richmond forwarding CapGrow newsletter about ANCOR Connect..."
+            },
+        ];
+
+        // Add outputs mapping
+        inputOutputMap["INPUT-001"] = [
+            { desc: "Create event file for ANCOR Connect", file: "ops/events/conferences/ancor-connect-2026.md", condition: "always" },
+            { desc: "Update events index", file: "ops/events/index.md", condition: "always" },
+            { desc: "Create contact entry for Dene", file: "reference/deal-contacts.md", condition: "if no record exists" },
+            { desc: "Add task: reach out to Dene", file: "ops/tasks/index.md", condition: "if prior relationship" },
+            { desc: "Draft reply to Richmond", file: "Email draft → Telegram", condition: "always" }
+        ];
+
+        inputs.push({
+                id: "INPUT-002",
+                time: "2026-04-01 11:54 AM CT",
+                from: "Richmond Donnelly",
+                type: "email",
+                subject: "Ephicacy Updates",
+                preview: "Teams meeting link forwarded for Ephicacy deal..."
+            });
+
+        inputOutputMap["INPUT-002"] = [
+            { desc: "Update Ephicacy deal state", file: "deals/ephicacy/deal-state.md", condition: "always" },
+            { desc: "Add calendar context", file: "memory/2026-04-01.md", condition: "always" }
+        ];
+
+        inputs.push({
+                id: "INPUT-003",
+                time: "2026-04-01 03:14 PM CT",
+                from: "Richmond Donnelly",
+                type: "email",
+                subject: "RE: Pyramids | Clearwater",
+                preview: "Calendar availability for Pyramids meeting..."
+            });
+
+        inputOutputMap["INPUT-003"] = [
+            { desc: "Update Pyramids deal state", file: "deals/pyramids-pharmacy/deal-state.md", condition: "always" },
+            { desc: "Add to memory", file: "memory/2026-04-01.md", condition: "always" },
+            { desc: "Draft reply to Richmond", file: "Email draft → Telegram", condition: "always" }
+        ];
+
+        inputs.push({
+                id: "INPUT-004",
+                time: "2026-04-01 05:26 PM CT",
+            {
+                id: "INPUT-002",
+                time: "2026-04-01 11:54 AM CT",
+                from: "Richmond Donnelly",
+                type: "email",
+                subject: "Ephicacy Updates",
+                preview: "Teams meeting link forwarded for Ephicacy deal..."
+            },
+            {
+                id: "INPUT-003",
+                time: "2026-04-01 03:14 PM CT",
+                from: "Richmond Donnelly",
+                type: "email",
+                subject: "RE: Pyramids | Clearwater",
+                preview: "Calendar availability for Pyramids meeting..."
+            },
+            {
+                id: "INPUT-004",
+                time: "2026-04-01 05:26 PM CT",
+                from: "lbajacan@alphamgp.com",
+                type: "email",
+                subject: "RE: Pyramids | Clearwater",
+                preview: "Leihlani confirming May date for meeting..."
+            }
+        ];
+
+        let batches = [];
+        let currentBatch = null;
+        let selectedInputIds = new Set();
+
+        function resetToEarliest() {
+            selectedInputIds.clear();
+            currentBatch = null;
+            document.getElementById('batchName').value = '';
+            document.getElementById('batchInfo').style.display = 'none';
+            document.getElementById('selectedInputDetails').style.display = 'none';
+            document.getElementById('outputsList').innerHTML = '';
+
+            // Sort inputs by time and show from earliest
+            const sorted = [...inputs].sort((a, b) => {
+                return new Date(a.time.replace(' CT', '')) - new Date(b.time.replace(' CT', ''));
+            });
+
+            console.log('Resetting to earliest. Total inputs:', sorted.length);
+            renderInputs(sorted);
+            renderOutputs();
+        }
+
+        function renderInputs(inputsToRender = inputs) {
+            const inputsList = document.getElementById('inputsList');
+            inputsList.innerHTML = inputsToRender.map(input => `
+                <div class="input-item ${selectedInputIds.has(input.id) ? 'selected' : ''}" onclick="toggleInputSelection('${input.id}')">
+                    <input type="checkbox" ${selectedInputIds.has(input.id) ? 'checked' : ''} onclick="event.stopPropagation()">
+                    <div style="font-weight: bold;">${input.subject}</div>
+                    <div class="input-time">${input.time} | ${input.from}</div>
+                    <span class="input-type">${input.type.toUpperCase()}</span>
+                    <div style="margin-top: 4px; color: #888; font-size: 0.9em;">${input.preview}</div>
+                </div>
+            `).join('');
+            document.getElementById('totalInputs').textContent = inputsToRender.length;
+        }
+
+        function toggleInputSelection(inputId) {
+            if (selectedInputIds.has(inputId)) {
+                selectedInputIds.delete(inputId);
+                document.getElementById('selectedInputDetails').style.display = 'none';
+            } else {
+                selectedInputIds.add(inputId);
+                showFullInputDetails(inputId);
+            }
+            renderInputs();
+            updateBatchInfo();
+            // Show outputs for this input
+            showInputOutputs(inputId);
+        }
+
+        function showFullInputDetails(inputId) {
+            const input = inputs.find(i => i.id === inputId);
+            if (!input) return;
+
+            const detailsDiv = document.getElementById('selectedInputDetails');
+            const detailsContent = document.getElementById('detailsContent');
+
+            let html = `
+                <div><strong>ID:</strong> ${input.id}</div>
+                <div><strong>Time:</strong> ${input.time}</div>
+                <div><strong>Type:</strong> ${input.type.toUpperCase()}</div>
+                <div><strong>From:</strong> ${input.from}</div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;">
+                    <div><strong>Subject:</strong></div>
+                    <div style="color: #5a9fd4; margin-top: 4px;">${input.subject}</div>
+                </div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444;">
+                    <div><strong>Preview/Body:</strong></div>
+                    <div style="color: #ccc; margin-top: 4px; font-size: 0.85em; line-height: 1.5;">${input.preview}</div>
+                </div>
+            `;
+
+            detailsContent.innerHTML = html;
+            detailsDiv.style.display = 'block';
+        }
+
+        function createNewBatch() {
+            const batchName = document.getElementById('batchName').value.trim();
+            if (!batchName) {
+                alert('Enter a batch name');
+                return;
+            }
+            if (selectedInputIds.size === 0) {
+                alert('Select at least one input');
+                return;
+            }
+
+            currentBatch = {
+                name: batchName,
+                inputIds: Array.from(selectedInputIds),
+                outputs: [],
+                created: new Date().toISOString()
+            };
+
+            updateBatchInfo();
+            document.getElementById('batchInfo').style.display = 'block';
+        }
+
+        function updateBatchInfo() {
+            if (currentBatch) {
+                document.getElementById('currentBatchName').textContent = currentBatch.name;
+                document.getElementById('selectedCount').textContent = currentBatch.inputIds.length;
+            }
+        }
+
+        function addOutput() {
+            if (!currentBatch) {
+                alert('Create a batch first');
+                return;
+            }
+            currentBatch.outputs.push({
+                id: `OUTPUT-${Date.now()}`,
+                description: 'New output',
+                filePath: 'ops/tasks/index.md',
+                condition: 'always'
+            });
+            renderOutputs();
+        }
+
+        function renderOutputs() {
+            const outputsList = document.getElementById('outputsList');
+            if (!currentBatch || currentBatch.inputIds.length === 0) {
+                outputsList.innerHTML = '<p style="color: #888; font-size: 0.9em;">Select inputs first, then edit outputs below</p>';
+                return;
+            }
+
+            // Show outputs for selected batch inputs
+            outputsList.innerHTML = currentBatch.outputs.map(output => `
+                <div class="output-item">
+                    <div>
+                        <input type="text" value="${output.description}" onchange="updateOutput('${output.id}', 'description', this.value)" placeholder="Output description" style="width: 100%; margin-bottom: 5px;">
+                        <input type="text" value="${output.filePath}" onchange="updateOutput('${output.id}', 'filePath', this.value)" placeholder="File path" style="width: 100%; margin-bottom: 5px;" class="output-file">
+                        <select onchange="updateOutput('${output.id}', 'condition', this.value)" style="width: 100%; padding: 4px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444;">
+                            <option value="always" ${output.condition === 'always' ? 'selected' : ''}>Always</option>
+                            <option value="conditional" ${output.condition === 'conditional' ? 'selected' : ''}>Conditional</option>
+                            <option value="never" ${output.condition === 'never' ? 'selected' : ''}>Never</option>
+                        </select>
+                    </div>
+                    <button class="btn-remove" onclick="removeOutput('${output.id}')">Remove</button>
+                </div>
+            `).join('');
+
+            updateMappingPreview();
+        }
+
+        function showInputOutputs(inputId) {
+            // Show all outputs for a specific input
+            const outputsList = document.getElementById('outputsList');
+            const outputs = inputOutputMap[inputId] || [];
+
+            outputsList.innerHTML = outputs.map((output, idx) => `
+                <div class="output-item">
+                    <div>
+                        <div class="output-desc">${output.desc}</div>
+                        <div class="output-file">→ ${output.file}</div>
+                        <div class="output-condition">[${output.condition}]</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateOutput(outputId, field, value) {
+            const output = currentBatch.outputs.find(o => o.id === outputId);
+            if (output) {
+                output[field] = value;
+                renderOutputs();
+            }
+        }
+
+        function removeOutput(outputId) {
+            currentBatch.outputs = currentBatch.outputs.filter(o => o.id !== outputId);
+            renderOutputs();
+        }
+
+        function updateMappingPreview() {
+            if (!currentBatch) {
+                document.getElementById('mappingPreview').value = '';
+                return;
+            }
+
+            const inputNames = currentBatch.inputIds.map(id => {
+                const input = inputs.find(i => i.id === id);
+                return input ? `${input.id} (${input.subject})` : id;
+            }).join('\n  - ');
+
+            const outputsText = currentBatch.outputs.map((o, idx) =>
+                `  ${idx + 1}. ${o.description}\n     File: ${o.filePath}\n     Condition: ${o.condition}`
+            ).join('\n');
+
+            const preview = `## BATCH: ${currentBatch.name}
+**Inputs:**
+  - ${inputNames}
+
+**Outputs:**
+${outputsText}
+
+**Created:** ${new Date(currentBatch.created).toLocaleString()}
+`;
+
+            document.getElementById('mappingPreview').value = preview;
+        }
+
+        function saveBatch() {
+            if (!currentBatch || currentBatch.outputs.length === 0) {
+                alert('Add at least one output first');
+                return;
+            }
+
+            batches.push(JSON.parse(JSON.stringify(currentBatch)));
+            document.getElementById('batchCount').textContent = batches.length;
+            alert(`✓ Batch "${currentBatch.name}" saved!`);
+
+            // Reset
+            currentBatch = null;
+            selectedInputIds.clear();
+            document.getElementById('batchName').value = '';
+            document.getElementById('batchInfo').style.display = 'none';
+            renderInputs();
+            renderOutputs();
+        }
+
+        function clearSelection() {
+            selectedInputIds.clear();
+            currentBatch = null;
+            document.getElementById('batchName').value = '';
+            document.getElementById('batchInfo').style.display = 'none';
+            renderInputs();
+            renderOutputs();
+        }
+
+        function exportAllMappings() {
+            if (batches.length === 0) {
+                alert('No batches saved yet');
+                return;
+            }
+
+            let markdown = '# Input-Output Batch Mappings\n\n';
+            batches.forEach((batch, idx) => {
+                markdown += `## Batch ${idx + 1}: ${batch.name}\n`;
+                markdown += `**Inputs:** ${batch.inputIds.join(', ')}\n\n`;
+                markdown += `**Outputs:**\n`;
+                batch.outputs.forEach((out, oidx) => {
+                    markdown += `${oidx + 1}. ${out.description} → \`${out.filePath}\` (${out.condition})\n`;
+                });
+                markdown += `\n---\n\n`;
+            });
+
+            // Copy to clipboard
+            navigator.clipboard.writeText(markdown).then(() => {
+                alert('✓ All mappings copied to clipboard!');
+            });
+        }
+
+        // Initialize - start with earliest input
+        resetToEarliest();
+    </script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Johnny Input-Output Mapping</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .inputs-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        .input-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .input-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 50px rgba(0,0,0,0.3);
+        }
+
+        .input-header {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 15px;
+        }
+
+        .input-id {
+            background: #2a5298;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .input-meta {
+            flex: 1;
+        }
+
+        .input-time {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .input-from {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 3px;
+        }
+
+        .input-subject {
+            font-size: 1.1em;
+            color: #2a5298;
+            font-weight: 500;
+        }
+
+        .input-summary {
+            background: #f5f5f5;
+            padding: 15px;
+            border-left: 4px solid #2a5298;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 0.95em;
+            color: #555;
+            line-height: 1.5;
+        }
+
+        .outputs-section {
+            margin-top: 15px;
+        }
+
+        .outputs-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+        }
+
+        .output-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .output-item {
+            display: grid;
+            grid-template-columns: 30px 1fr 280px 150px;
+            gap: 15px;
+            align-items: center;
+            padding: 12px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            border-left: 3px solid #2a5298;
+            font-size: 0.9em;
+        }
+
+        .output-index {
+            font-weight: 600;
+            color: #2a5298;
+            text-align: center;
+        }
+
+        .output-description {
+            color: #333;
+        }
+
+        .output-file {
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #2a5298;
+            background: white;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            overflow-x: auto;
+        }
+
+        .output-condition {
+            background: #fff3cd;
+            padding: 8px;
+            border-radius: 4px;
+            color: #856404;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .output-condition.always {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .output-condition.draft {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        @media (max-width: 1200px) {
+            .output-item {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #2a5298;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Johnny Input-Output Mapping</h1>
+            <p class="subtitle">Ground truth dataset for skill prompt engineering</p>
+        </header>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="inputCount">0</div>
+                <div class="stat-label">Total Inputs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="outputCount">0</div>
+                <div class="stat-label">Total Outputs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="dayCount">0</div>
+                <div class="stat-label">Days Mapped</div>
+            </div>
+        </div>
+
+        <div class="inputs-grid" id="inputsContainer">
+            <!-- Inputs will be populated here via JavaScript -->
+        </div>
+    </div>
+
+    <script>
+        // Sample data - will be replaced with real data from input-output-map.md
+        const inputs = [
+            {
+                id: "INPUT-001",
+                time: "8:32 AM CT",
+                from: "Richmond Donnelly",
+                subject: "FW: 2026 Behavioral Health Workforce Outlook / CapGrow at ANCOR Connect",
+                summary: "Richmond forwarding CapGrow newsletter. Notes Austin met Dene (CapGrow, behavioral health RE) at Sessions last fall. She had dinner with David in Miami. ANCOR Connect is April 21-23, Boston, Booth #511.",
+                outputs: [
+                    { index: 1, desc: "Create ANCOR Connect event file (research: dates, location, cost, vertical fit)", file: "ops/events/conferences/ancor-connect-2026.md", condition: "always" },
+                    { index: 2, desc: "Add ANCOR Connect to Horizon table", file: "ops/events/index.md", condition: "always" },
+                    { index: 3, desc: "Create contact entry for Dene (CapGrow, behavioral health RE, met at Sessions, Miami dinner w/ David)", file: "reference/deal-contacts.md", condition: "Only if no existing record found" },
+                    { index: 4, desc: "Scan all deal files for Dene/CapGrow mentions, note findings in her contact entry", file: "deals/*/deal-state.md", condition: "Only if contact entry created" },
+                    { index: 5, desc: "Add task: reach out to Dene before ANCOR Connect", file: "ops/tasks/index.md", condition: "Only if prior relationship record exists" },
+                    { index: 6, desc: "Note Austin replied to Richmond re: ANCOR Connect", file: "memory/2026-04-01.md", condition: "always" },
+                    { index: 7, desc: "Draft reply to Richmond: confirms remembers Dene, shares event intel, suggests worthwhile to attend", file: "Email draft → Telegram", condition: "draft" }
+                ]
+            }
+        ];
+
+        function renderInputs() {
+            const container = document.getElementById('inputsContainer');
+            container.innerHTML = '';
+
+            let totalOutputs = 0;
+
+            inputs.forEach(input => {
+                totalOutputs += input.outputs.length;
+
+                const card = document.createElement('div');
+                card.className = 'input-card';
+
+                let outputsHTML = input.outputs.map(output => {
+                    const conditionClass = output.condition.toLowerCase().includes('always') ? 'always' :
+                                          output.condition.toLowerCase().includes('draft') ? 'draft' : '';
+                    return `
+                        <div class="output-item">
+                            <div class="output-index">#${output.index}</div>
+                            <div class="output-description">${output.desc}</div>
+                            <div class="output-file">${output.file}</div>
+                            <div class="output-condition ${conditionClass}">${output.condition}</div>
+                        </div>
+                    `;
+                }).join('');
+
+                card.innerHTML = `
+                    <div class="input-header">
+                        <div class="input-id">${input.id}</div>
+                        <div class="input-meta">
+                            <div class="input-time">⏰ ${input.time}</div>
+                            <div class="input-from">📧 ${input.from}</div>
+                            <div class="input-subject">${input.subject}</div>
+                        </div>
+                    </div>
+                    <div class="input-summary">${input.summary}</div>
+                    <div class="outputs-section">
+                        <div class="outputs-title">📤 Outputs (${input.outputs.length})</div>
+                        <div class="output-list">${outputsHTML}</div>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+
+            document.getElementById('inputCount').textContent = inputs.length;
+            document.getElementById('outputCount').textContent = totalOutputs;
+            document.getElementById('dayCount').textContent = new Set(inputs.map(i => i.time.split(' ')[2])).size;
+        }
+
+        // Render on load
+        renderInputs();
+    </script>
+</body>
+</html>

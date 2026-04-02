@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(bash:*)",
+      "Bash(lsof:*)",
+      "Bash(jq:*)",
+      "Bash(wc:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(test:*)"
+    ],
+    "additionalDirectories": [
+      "/private/tmp"
+    ]
+  }
+}
