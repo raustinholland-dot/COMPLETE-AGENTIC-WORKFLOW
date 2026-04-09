@@ -203,33 +203,29 @@ The index uses wikilinks so it functions as a clickable navigation surface. The 
 
 ## Log
 
-`wiki/log.md` is an append-only chronological record of what the compiler did.
+`wiki/log.md` is a reverse-chronological record of what the compiler did. **New entries go at the top**, immediately below the frontmatter and `# Compiler Log` heading. Newest first.
+
+**Every log entry must use this exact format:**
 
 ```markdown
+## YYYY-MM-DD HH:MM — [Label]
+
+**Inputs processed:** [source description]
+
+- UPDATED [[article]] — what changed
+- CREATED [[article]] — why
+- ENRICHED [[article]] — what was added
+- CONNECTED [[article-a]] <-> [[article-b]] — why
+- INDEX updated — what changed
+
 ---
-title: Compiler Log
----
-
-# Compiler Log
-
-## 2026-04-08 14:30
-
-**Inputs processed:** raw/2026-04-08.md (entries 12:43 PM through 2:15 PM)
-
-- UPDATED [[exer-urgent-care]] — Brian confirmed call time, added to communication history
-- UPDATED [[brian-chao]] — new context on scheduling preferences
-- CREATED [[knowbe4-aida]] (stub) — Brian requested Gold vs Diamond breakout
-- UPDATED [[paradigm-health-pp]] — Jenna follow-up sent, no response yet
-- CONNECTED [[exer-urgent-care]] <-> [[knowbe4-aida]] — pricing dependency
-- INDEX updated — added knowbe4-aida to Concepts
-
-## 2026-04-08 09:00
-
-**Inputs processed:** raw/2026-04-08.md (entries 12:43 AM through 8:32 AM)
-
-- UPDATED [[paradigm-health-mss]] — full 3/25-3/26 email thread logged
-- ...
 ```
+
+Rules:
+- Always `##` heading level (never `###`, never bold text as heading)
+- Always a `---` separator after each entry
+- New entries inserted at the top, below the `# Compiler Log` heading
+- Never append to the bottom of the log
 
 Each log entry records: what raw inputs were processed, what articles were created/updated/connected, and what changed in the index.
 
@@ -265,9 +261,13 @@ For each new raw input entry:
 
 4. **Maintain connections.** Add wikilinks between articles that are now related. Update `related` frontmatter on both sides. This is where compound value is created — a pricing email about Exer should link to the Exer deal, the person who sent it, the product being priced, and any competing deal where the same product was discussed.
 
+   **Backlink verification (mandatory):** After creating or updating any article, check every article listed in its `related` field. If the backlink does not exist in that article's `related` field, add it now. Do not defer this to lint. Every compile pass must leave all backlinks consistent.
+
 5. **Update the index.** Add new articles, update statuses, move closed items.
 
 6. **Log what happened.** Append to `wiki/log.md`.
+
+7. **Ledger check.** If you updated a deal article, check whether the change affects any field in the deal's last `scores.jsonl` entry. If so, update that field. If a P2V2C2 dimension may have shifted, note it in the DM compile summary.
 
 ### Compiler Judgment Calls
 

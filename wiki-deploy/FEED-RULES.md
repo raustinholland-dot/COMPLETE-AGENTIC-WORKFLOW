@@ -1,6 +1,6 @@
-# FEED-RULES.md — Capture + Triage
+# FEED-RULES.md — Capture + Triage + Compile
 
-This file governs how feed channel inputs are handled. The wiki schema (`wiki-schema.md`) governs how knowledge is compiled.
+This file governs how feed channel inputs are handled. The wiki schema (`wiki-schema.md`) governs compilation details.
 
 ---
 
@@ -41,10 +41,19 @@ subject: [if email]
 - If there are uncompiled raw inputs relevant to this topic, compile them into the wiki first (quick targeted compile)
 - Draft response or action inline in Austin's DM
 - Post to Ops Log: `CAPTURE + TRIAGE: URGENT + DRAFT`
+- Then proceed to Step 6.
 
 ### 5. IF NORMAL
-- One-line ack to Austin's DM: "Captured [brief summary]. Will compile."
+- One-line ack to Austin's DM: "Captured [brief summary]. Compiling."
 - Post to Ops Log: `CAPTURE + TRIAGE: NORMAL`
+- Then proceed to Step 6.
+
+### 6. COMPILE
+- After every capture (urgent or normal), run compile immediately.
+- Load `wiki-schema.md`. Process the new raw entry just captured.
+- Update wiki articles, index, and log.
+- DM Austin with compile summary when done.
+- Post to Ops Log: `COMPILE: [summary]`
 
 ---
 
@@ -60,10 +69,9 @@ When an email thread arrives:
 
 ## What This File Does NOT Cover
 
-- **Compilation** — handled by the compile cron using `wiki-schema.md`
 - **Scoring** — handled by the analysis/query layer on demand
 - **Drafting** — handled on demand when Austin asks or when triage flags urgent
 - **Salesforce updates** — handled by the SF sync cron reading from the wiki
 - **Verification** — the compile step is self-verifying; the lint cron checks wiki integrity
 
-The pipeline is: **capture → compile → query/act**. This file handles capture only.
+The pipeline is: **capture → compile → query/act**. This file handles capture and immediate compile. The compile cron (when active) handles any inputs missed by this step.
