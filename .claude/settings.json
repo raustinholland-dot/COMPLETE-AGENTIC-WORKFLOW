@@ -1,5 +1,17 @@
 {
   "permissions": {
     "allow": []
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat /Users/austinhollsnd/.claude/projects/-Users-austinhollsnd-Desktop-sales-tools/memory/feedback_karpathy_principles.md 2>/dev/null | jq -Rs '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:.}}'"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -74,6 +74,17 @@ This is the non-negotiable ground-truth procedure. Memory file: `feedback_scrape
 
 Only after all seven: report what the run did, what it cost, and which stages succeeded. Every "it works" claim must cite a specific session jsonl line or file diff.
 
+## Response format during testing (STRICT — enforced)
+
+Austin can see the run detail page in Obsidian. Don't recap what he's already looking at. The response format is locked:
+
+1. **Scoreboard** — reference, don't re-render. ("See scoreboard ↑" or skip entirely.)
+2. **Blocked tool calls** — scan compile + output session jsonls for `isError: true` or errored `toolResult` events. "None" if clean; otherwise list one-line each.
+3. **For each red (over-goal) stage** — one sentence on root cause (actual mechanism, not a restated metric), one sentence on the concrete fix (file to edit + setting/change + expected new number). If the step's purpose isn't obvious from its name, one-line affirmation first.
+4. **Questions** — short, any open items.
+
+Total ceiling: a few sentences. If the response is paragraphs, it's wrong. See memory `feedback_testing_response_format.md` for the full spec and the reason it exists.
+
 ## Dashboard verification (after the 7-step walk)
 
 Once the jsonl walk says the run was correct, confirm the Obsidian surface reflects it:
